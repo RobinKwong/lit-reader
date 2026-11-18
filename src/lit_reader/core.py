@@ -915,6 +915,13 @@ def cmd_fetch(a):
 # Route: arXiv HTML
 # --------------------------------------------------------------------------
 
+def visible_text(n):
+    """A node's text without the TeX and MathML annotations hidden inside formulas."""
+    if isinstance(n, str):
+        return n
+    return "" if n.tag in ("annotation", "annotation-xml") else "".join(visible_text(k) for k in n.kids)
+
+
 ARXIV_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "figure", "table", "ul", "ol", "dl"}
 
 
@@ -1020,6 +1027,11 @@ def arxiv_doc(meta, d):
                 h = ix.run(k).strip()
                 if h:
                     doc.add(t="p", html=h)
+                for img in k.findall(lambda x: x.tag == "img"):  # a picture placed without a figure around it
+                    f = imgdir / safe_id(img.attrs.get("src", ""))
+                    u = data_uri(f.read_bytes()) if f.exists() else None
+                    if u:
+                        doc.add(t="fig", kind="figure", label="", caption="", table="", imgs=[(u, img.attrs.get("alt") or "")])
                 continue
             if k.tag == "figure" and k.parent is not None and k.parent.tag == "figure":
                 continue
@@ -1028,13 +1040,17 @@ def arxiv_doc(meta, d):
                 continue
             if k.tag in ("ul", "ol"):
                 items = []
+                marks = [tg.text().strip() for tg in k.findall(lambda x: "ltx_tag_item" in x.cls())]
+                custom = any(not re.fullmatch(r"\d+[.)]?|[•∙·*–—-]", m) for m in marks)  # "(iv)" must survive: the text may cite it
                 for li in k.children():
                     if li.tag != "li":
                         continue
+                    mark = ""
                     for tg in li.findall(lambda x: "ltx_tag_item" in x.cls()):
+                        mark = mark or tg.text().strip()
                         tg.kids = []
-                    items.append(ix.run(li).strip())
-                doc.add(t="list", ordered=k.tag == "ol", items=items)
+                    items.append((esc(mark) + " " if custom and mark else "") + ix.run(li).strip())
+                doc.add(t="list", ordered=k.tag == "ol" and not custom, plain=custom, items=items)
                 continue
             if k.tag == "table" and c & {"ltx_equation", "ltx_equationgroup"}:
                 rows = [r for r in k.findall(lambda x: x.tag == "tr") if r.find(lambda x: x.tag == "math") is not None] or [k]
@@ -1049,7 +1065,7 @@ def arxiv_doc(meta, d):
                 doc.add(t="fig", kind="table", label="", caption="", imgs=[], table=ix.one(k))
                 continue
             if "ltx_listing" in c:
-                lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
+                lines = [visible_text(ln).rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
                 doc.add(t="pre", text="\n".join(lines))
                 continue
             if k.tag == "dl":
@@ -1059,7 +1075,10 @@ def arxiv_doc(meta, d):
                 continue
             if "ltx_note" in c:
                 continue  # notes are placed where they are cited
-            if k.tag in ("div", "section") and any(isinstance(x, str) and x.strip() for x in k.kids):  # text sitting directly in a container
+            if k.tag in ("div", "section") and any(  # text sitting directly in a container
+                    (isinstance(x, str) and x.strip()) or
+                    (isinstance(x, Node) and x.tag in ("span", "a", "em", "strong", "i", "b") and "ltx_note" not in x.cls() and x.text().strip())
+                    for x in k.kids):
                 run = Node("p", parent=k)
                 for x in k.kids + [None]:
                     if x is None or (isinstance(x, Node) and x.tag in ARXIV_BLOCKS):
@@ -1115,11 +1134,10 @@ def arxiv_figure(doc, ix, k, imgdir):
                 return False
             p = p.parent
         return True
-    table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table") if outer_table(t))
+    table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table")  # a table holding only pictures is layout
+                    if outer_table(t) and t.find(lambda x: x.tag == "img") is None and t.text().strip())
     kind = "table" if "ltx_table" in k.cls() else "figure"
     fid = "x-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None
-    if not label and not caption and not imgs and not table:
-        return
     page = find_pdf_page(doc, label)
     if not imgs and not table:
         # arXiv's converter lost this figure: use Docling's crop of it from the PDF
@@ -1127,7 +1145,7 @@ def arxiv_figure(doc, ix, k, imgdir):
         if crop:
             imgs, page = [(crop[0], alts[0] if alts else "")], crop[1]
     if not imgs and not table:  # an algorithm or other float made of text
-        lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
+        lines = [visible_text(ln).rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
 
         def spoken_only(p):  # captions and the accessibility descriptions of a lost image
             while p is not None and p is not k:
@@ -1140,6 +1158,8 @@ def arxiv_figure(doc, ix, k, imgdir):
             table = '<pre class="listing">%s</pre>' % esc("\n".join(lines))
         elif not float_key(label):  # a lost figure or table keeps its "did not come through" notice
             table = "".join("<p>%s</p>" % b for b in body if b)
+    if not label and not caption and not imgs and not table:
+        return
     doc.add(t="fig", kind=kind, id=fid, label=label, caption=caption, imgs=imgs, table=table, page=page)
 
 
@@ -1248,6 +1268,7 @@ class JatsInline(Inline):
             if kind == "fn":
                 fn = self.doc._jats_fns.get(rid)
                 if fn is not None:
+                    self.doc._jats_cited.add(rid)
                     return self.doc.note(self.run(fn).strip())
             return self.run(n)
         if n.tag in ("inline-formula", "disp-formula", "alternatives"):
@@ -1283,6 +1304,7 @@ def jats_doc(meta, d):
     doc = Doc(dict(meta))
     doc._jats_fns = {n.attrs.get("id"): n for n in root.findall(lambda x: x.tag == "fn") if n.attrs.get("id")}
     doc._jats_refs = {n.attrs.get("id") for n in root.findall(lambda x: x.tag == "ref")}
+    doc._jats_cited = set()
     ix = JatsInline(doc)
     imgdir = d / "img"
     doc._imgdir = imgdir
@@ -1293,6 +1315,8 @@ def jats_doc(meta, d):
     if art_meta is not None:
         t = art_meta.find(lambda x: x.tag == "article-title")
         if t is not None:
+            for x in t.findall(lambda x: x.tag == "xref" and x.attrs.get("ref-type") == "fn"):
+                x.kids, x.attrs["ref-type"] = [], "none"  # a note on the title has no place in the heading or the browser tab
             doc.meta["title_html"] = ix.run(t).strip()
         all_abstracts = art_meta.findall(lambda x: x.tag == "abstract")
         full = [a for a in all_abstracts if a.attrs.get("abstract-type") not in ("toc", "teaser", "precis", "web-summary", "graphical")]
@@ -1417,7 +1441,8 @@ def jats_doc(meta, d):
         cit = ref.find(lambda x: x.tag in ("mixed-citation", "element-citation", "citation"))
         if cit is not None:
             doc.refs.append((ref.attrs.get("id", ""), structured_ref(ix, cit) if cit.tag == "element-citation" else ix.run(cit).strip()))
-    fns = [f for f in root.findall(lambda x: x.tag == "fn" and x.parent is not None and x.parent.tag == "fn-group")]
+    fns = [f for f in root.findall(lambda x: x.tag == "fn" and x.parent is not None and x.parent.tag == "fn-group")
+           if f.attrs.get("id") not in doc._jats_cited]  # notes already shown where they are cited
     notes = root.findall(lambda x: x.tag == "author-notes")
     extra = [ix.run(f).strip() for f in fns] + [ix.run(fn).strip() for an in notes for fn in an.findall(lambda x: x.tag == "fn")]
     extra = [e for e in extra if e]

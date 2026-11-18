@@ -220,6 +220,7 @@
     if (!geo.length) return;
     var y = window.scrollY + Math.max(90, window.innerHeight * 0.3); // a third of the way down, as scroll trackers usually do
     var i = 0; while (i < geo.length - 1 && geo[i + 1].top <= y) i++;
+    if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) i = geo.length - 1;  // the end of the page counts as read
     var cur = geo[i];
     var secLeft = 0, bodyLeft = 0, bodyTotal = 0;
     for (var j = 0; j < geo.length; j++) {
