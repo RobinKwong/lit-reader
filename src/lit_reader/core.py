@@ -426,7 +426,7 @@ def pdf_href(doc):
 def pdf_link(doc, page):
     if not doc.pdf or not page:
         return ""
-    return '<a class="pdf-link" href="%s#page=%d">open page %d of the PDF</a>' % (attr(pdf_href(doc)), page, page)
+    return '<a class="pdf-link" href="%s#page=%d" target="_blank" rel="noopener">open page %d of the PDF</a>' % (attr(pdf_href(doc)), page, page)
 
 
 def render(doc, list_line=None, list_pos=None):
@@ -520,9 +520,9 @@ def render(doc, list_line=None, list_pos=None):
     meta_bits = [x for x in [esc(m.get("venue") or ""), str(m.get("year") or "")] if x]
     doi = m.get("doi")
     if doi:
-        meta_bits.append('<a href="https://doi.org/%s" rel="noopener">doi:%s</a>' % (attr(doi), esc(doi)))
+        meta_bits.append('<a href="https://doi.org/%s" target="_blank" rel="noopener">doi:%s</a>' % (attr(doi), esc(doi)))
     elif m.get("url"):
-        meta_bits.append('<a href="%s" rel="noopener">%s</a>' % (attr(m["url"]), esc(m["url"])))
+        meta_bits.append('<a href="%s" target="_blank" rel="noopener">%s</a>' % (attr(m["url"]), esc(m["url"])))
     meta_bits.append("about %d min of reading in the main text" % max(1, round(main_words(doc) / float(WPM))))
     why = ""
     if list_line:
@@ -600,8 +600,8 @@ def chunked(h, target=70):
 
 def pdf_anchor(doc, b):
     if doc.pdf and b.get("pdf"):
-        return '<a href="%s#page=%d" title="open this page of the PDF">p. %s</a>' % (
-            attr(pdf_href(doc)), b["pdf"], esc(str(b["label"])))
+        return '<a href="%s#page=%d" title="Printed page %s. Opens page %d of the PDF.">p. %s</a>' % (
+            attr(pdf_href(doc)), b["pdf"], attr(str(b["label"])), b["pdf"], esc(str(b["label"])))
     return None
 
 
@@ -638,8 +638,8 @@ PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settin
     <button data-pref="font" data-val="charter" style="font-family:Charter">Charter</button>
     <button data-pref="font" data-val="sans">Sans</button></span></div>
   <div class="row" role="group" aria-label="Size"><span>Size</span><span class="seg">
-    <button id="size-down" aria-label="smaller">A−</button><span id="size-now" style="padding:.2rem .3rem">20px</span>
-    <button id="size-up" aria-label="larger">A+</button></span></div>
+    <button id="size-down" aria-label="A− smaller text">A−</button><span id="size-now" aria-live="polite" style="padding:.2rem .3rem">20px</span>
+    <button id="size-up" aria-label="A+ larger text">A+</button></span></div>
   <div class="row" role="group" aria-label="Line length"><span>Line length</span><span class="seg">
     <button data-pref="width" data-val="narrow">Narrow</button><button data-pref="width" data-val="medium">Medium</button>
     <button data-pref="width" data-val="wide">Wide</button></span></div>
@@ -1135,7 +1135,14 @@ class JatsInline(Inline):
             kind = n.attrs.get("ref-type")
             rid = n.attrs.get("rid", "")
             if kind == "bibr":
-                return self.doc.cite(rid.split(), self.run(n))
+                ids = rid.split()
+                r = re.fullmatch(r"\s*(\d{1,3})\s*[–—-]\s*(\d{1,3})\s*", n.text())
+                m = re.fullmatch(r"(.*?)0*%s" % r.group(1), ids[0]) if r and len(ids) == 1 else None
+                if m and int(r.group(1)) < int(r.group(2)) <= int(r.group(1)) + 50:  # "1–3" with only the first reference tagged
+                    width = len(ids[0]) - len(m.group(1))
+                    wanted = [m.group(1) + str(k).zfill(width) for k in range(int(r.group(1)), int(r.group(2)) + 1)]
+                    ids = [x for x in wanted if x in self.doc._jats_refs] or ids
+                return self.doc.cite(ids, self.run(n))
             if kind in ("fig", "table", "sec", "disp-formula", "supplementary-material"):
                 return '<a href="#j-%s">%s</a>' % (safe_id(rid.split()[0]) if rid else "", self.run(n))
             if kind == "fn":
@@ -1171,6 +1178,7 @@ def jats_doc(meta, d):
     root = et_to_node(ET.parse(str(path)).getroot())
     doc = Doc(dict(meta))
     doc._jats_fns = {n.attrs.get("id"): n for n in root.findall(lambda x: x.tag == "fn") if n.attrs.get("id")}
+    doc._jats_refs = {n.attrs.get("id") for n in root.findall(lambda x: x.tag == "ref")}
     ix = JatsInline(doc)
     imgdir = d / "img"
     doc.pdf = source_pdf(meta)
@@ -1232,7 +1240,7 @@ def jats_doc(meta, d):
                 if f is not None:
                     u = data_uri(f.read_bytes())
                     if u:
-                        imgs.append((u, ""))
+                        imgs.append((u, "%s, shown as an image" % (label.text().strip().rstrip(".:") if label is not None else "Table") if t == "table-wrap" else ""))
             table = ""
             tb = k.find(lambda x: x.tag == "table")
             if tb is not None:
@@ -1455,6 +1463,8 @@ def docling_doc(meta, d, pages=None):
         nonlocal last_page
         if p and p != last_page:
             last_page = p
+            if printed.get(p) == "":
+                return
             label = printed.get(p) or str(p + offset)
             doc.add(t="page", label=label, pdf=p + offset)
 
@@ -1481,7 +1491,7 @@ def docling_doc(meta, d, pages=None):
         p = prov[0].get("page_no")
         if label in ("page_header", "page_footer") or p in cover:
             continue
-        text = (item.get("text") or "").strip()
+        text = STAMP_IN_TEXT.sub("", item.get("text") or "").strip()  # Docling can fuse a page's publisher line into a sentence
         if label in ("text", "paragraph", "list_item", "footnote", "caption", "section_header", "title", "formula", "code", "checkbox_selected", "checkbox_unselected", "reference"):
             if WATERMARK.match(text):
                 continue
@@ -1501,7 +1511,8 @@ def docling_doc(meta, d, pages=None):
                 png = crop_png(doc.pdf, pnum + offset, box, page_h.get(pnum, 792))
                 u = data_uri(png) if png else None
                 if u:
-                    imgs.append((u, cap_text[:200]))
+                    # a figure's caption follows it; a table's data is only in the picture, so say so
+                    imgs.append((u, "%s, shown as an image" % (lab.rstrip(".: ") or "Table") if kind == "tables" else ""))
             if not imgs and not cap_text:
                 continue
             bb = prov[0].get("bbox") or {}
@@ -1557,6 +1568,9 @@ def docling_doc(meta, d, pages=None):
             if chapter_pre[0]:
                 text, chapter_pre[0] = chapter_pre[0] + ": " + text, None
             lvl = 2 if (item.get("level") or 1) <= 1 else 3
+            numbered = re.match(r"^\d{1,2}((?:\.\d{1,2})*)\.?\s", text)
+            if numbered:  # Docling often flattens levels; "3.2" says where it belongs
+                lvl = 3 if numbered.group(1) else 2
             if text.isupper() and len(text) > 3:
                 text = text[0] + text[1:].lower()
             # acknowledgments near the front of a book or thesis don't end the main text
@@ -1623,10 +1637,16 @@ FURNITURE = re.compile(
     r"routledge|taylor & francis group|check for updates|open n? ?access)$", re.I)
 
 
+STAMP_IN_TEXT = re.compile(r"[^©]{0,40}©\s*the author\(s\)\s+\d{4}.{0,240}?(?:journals\.sagepub\.com/home/\w+|sagepub\.com/journals-permissions)\s*", re.I | re.S)
+PUBLISHER_STAMP = re.compile(r"article reuse guidelines|journals-permissions|©\s*the author\(s\)\s+\d{4}\s+https?://", re.I)
+
+
 def furniture(text, title):
     """Publisher page furniture: kicker labels, bare URLs, stray glyphs, and the
     title repeated on later pages."""
     t = text.strip()
+    if len(t) < 400 and PUBLISHER_STAMP.search(t):
+        return True
     if len(t) <= 2 or FURNITURE.match(t) or re.fullmatch(r"(https?://|www\.|doi\.org/|science\.org/)\S+", t):
         return True
     if title:
@@ -1661,12 +1681,15 @@ def link_references(doc, raw):
         known = set(n for n, _ in doc.refs)
 
         def numfix(m):
-            parts = re.split(r"(\s*[,–-]\s*)", m.group(2))
-            if not all(re.fullmatch(r"\d{1,3}", x) or re.fullmatch(r"\s*[,–-]\s*", x) for x in parts):
-                return m.group(0)
-            if not any(x in known for x in parts):
-                return m.group(0)
-            return m.group(1) + "".join(doc.cite([x], x) if x in known else x for x in parts) + m.group(3)
+            out, linked = [], False
+            for x in re.split(r"(\s*,\s*)", m.group(2)):
+                r = re.fullmatch(r"(\d{1,3})\s*[–-]\s*(\d{1,3})", x)
+                ids = [x] if x in known else []
+                if r and int(r.group(1)) < int(r.group(2)) <= int(r.group(1)) + 50:
+                    ids = [str(k) for k in range(int(r.group(1)), int(r.group(2)) + 1) if str(k) in known]
+                linked = linked or bool(ids)
+                out.append(doc.cite(ids, x) if ids else x)
+            return m.group(1) + "".join(out) + m.group(3) if linked else m.group(0)
         pat = re.compile(r"([(\[])(\d{1,3}(?:\s*[,–-]\s*\d{1,3})*)([)\]])")
     else:
         # author-year: a reference starts with a capitalised surname and contains a year
@@ -1691,9 +1714,9 @@ def link_references(doc, raw):
                 keys.setdefault((sur.group(1).lower(), yr.group(1) + yr.group(2)), rid)
 
         def numfix(m):
-            rid = keys.get((m.group(1).lower(), m.group(2)))
+            rid = keys.get((m.group(1).lower(), m.group(2) or m.group(3)))
             return doc.cite([rid], m.group(0)) if rid else m.group(0)
-        pat = re.compile(r"\b(?:(?:[Vv]an|[Vv]on|[Dd]e|[Dd]er|[Dd]en|[Dd]u|[Ll]a|[Ll]e)\s+)*([A-ZÀ-Ý][\w'’-]+)(?:\s+et al\.?|\s+(?:and|&amp;)\s+[A-ZÀ-Ý][\w'’-]+)?,?\s+\(?((?:1[89]|20)\d\d[a-z]?)\b")
+        pat = re.compile(r"\b(?:(?:[Vv]an|[Vv]on|[Dd]e|[Dd]er|[Dd]en|[Dd]u|[Ll]a|[Ll]e)\s+)*([A-ZÀ-Ý][\w'’-]+)(?:\s+et al\.?|\s+(?:and|&amp;)\s+[A-ZÀ-Ý][\w'’-]+)?,?\s+(?:\(((?:1[89]|20)\d\d[a-z]?)\)|\(?((?:1[89]|20)\d\d[a-z]?)\b)")
     for b in doc.blocks:
         if b["t"] == "p":
             b["html"] = pat.sub(numfix, b["html"])
@@ -1711,6 +1734,13 @@ def printed_page_numbers(j):
             p = (t.get("prov") or [{}])[0].get("page_no")
             if m and p and p not in out:
                 out[p] = m.group(1)
+    # most pages share one gap between PDF page and printed page; use it to fill misses and overrule misreadings
+    gaps = Counter(p - int(n) for p, n in out.items())
+    if gaps:
+        gap, seen = gaps.most_common(1)[0]
+        if seen >= 2 and seen * 2 >= len(out):
+            pages = [int(k) for k in j.get("pages", {})] or list(out)
+            out = {p: str(p - gap) if p - gap >= 1 else "" for p in pages}  # "": a cover page with no printed number
     return out
 
 

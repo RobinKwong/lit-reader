@@ -86,7 +86,12 @@
   }
   if (tocToggle && toc) {
     tocToggle.addEventListener("click", function (e) { e.stopPropagation(); setToc(!toc.classList.contains("open")); });
-    toc.addEventListener("click", function (e) { if (e.target.closest("a")) setToc(false); });
+    toc.addEventListener("click", function (e) {
+      var a = e.target.closest("a"); if (!a) return;
+      setToc(false);
+      var to = a.hash && document.getElementById(a.hash.slice(1));  // keyboard focus moves with the jump
+      if (to) { to.tabIndex = -1; setTimeout(function () { to.focus({ preventScroll: true }); }, 30); }
+    });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && toc.classList.contains("open")) setToc(false, true); });
   }
 
@@ -95,6 +100,10 @@
     var m = e.target.closest(".sn-mark"); if (!m) return;
     var n = document.getElementById(m.getAttribute("data-for"));
     if (n && getComputedStyle(n).float === "none") m.setAttribute("aria-expanded", String(n.classList.toggle("open")));
+  });
+  document.querySelectorAll(".sn-mark").forEach(function (m) {
+    var n = document.getElementById(m.getAttribute("data-for"));
+    if (n && getComputedStyle(n).float === "none") m.setAttribute("aria-expanded", "false");
   });
   document.addEventListener("keydown", function (e) {
     var m = e.target.closest && e.target.closest(".sn-mark");
@@ -206,14 +215,16 @@
       if (j >= i && geo[j].sec === cur.sec) secLeft += geo[j].w;
     }
     var sm = Math.max(1, Math.round(secLeft / WPM)), bm = Math.round(bodyLeft / WPM);
-    if (where) {
+    var atStart = geo[0].top > y;  // still on the title and abstract, before the first section
+    if (where && atStart) where.textContent = "About " + Math.max(1, bm) + " min of reading";
+    else if (where) {
       var t = sectionTitle(cur.sec);
       where.textContent = !secLeft ? t  // the reference list has no reading time
         : window.innerWidth < 560 ? sm + " min left" + (t ? " · " + t : "")
         : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body ? " · " + bm + " min to the end of the main text" : "");
     }
     if (bar && bodyTotal) bar.style.width = (100 * (1 - bodyLeft / bodyTotal)) + "%";
-    Object.keys(tocLinks).forEach(function (k) { tocLinks[k].classList.toggle("current", k === cur.sec); });
+    Object.keys(tocLinks).forEach(function (k) { tocLinks[k].classList.toggle("current", !atStart && k === cur.sec); });
     latest = { id: cur.el.id, started: bodyTotal && bodyLeft / bodyTotal < 0.97 };
     clearTimeout(saveTimer);
     if (Date.now() - lastSaved > 1500) savePosition();

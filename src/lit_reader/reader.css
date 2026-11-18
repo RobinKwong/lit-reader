@@ -165,7 +165,7 @@ a.cite:hover { border-bottom-style: solid; }
 .cite-card + .cite-card { margin-top: .3rem; }
 
 /* ---------- sidenotes and page numbers (Tufte-style margins) ---------- */
-.sn-mark { font: 600 .7em/0 var(--ui); color: var(--accent); cursor: pointer; vertical-align: super; padding: 0 .1em; }
+.sn-mark { font: 600 .7em/0 var(--ui); color: var(--accent); cursor: pointer; vertical-align: super; padding: .35em .3em; }
 .sidenote {
   float: right; clear: right; width: var(--margin-w);
   margin-right: calc(-1 * (var(--margin-w) + var(--gap)));
