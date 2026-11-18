@@ -381,9 +381,11 @@ def authors_html(authors):
     """The byline. A long author list starts collapsed, so the paper comes first."""
     if len(authors) <= AUTHORS_MAX:
         return '<p class="authors">%s</p>' % esc(", ".join(authors))
-    return ('<details class="authors"><summary><span class="au-short">%s</span> <span class="au-more">and %d more</span>'
-            '<span class="au-less">Show fewer authors</span></summary><p>%s</p></details>') % (
-        esc(", ".join(authors[:AUTHORS_SHOWN])), len(authors) - AUTHORS_SHOWN, esc(", ".join(authors)))
+    rest = len(authors) - AUTHORS_SHOWN
+    return ('<p class="authors">%s<span class="au-rest" id="au-rest" hidden>, %s</span> '
+            '<button class="au-toggle" id="au-toggle" type="button" aria-expanded="false" aria-controls="au-rest" data-more="Show %d more">'
+            '<span class="au-label">Show %d more</span><span class="au-chevron" aria-hidden="true"></span></button></p>') % (
+        esc(", ".join(authors[:AUTHORS_SHOWN])), esc(", ".join(authors[AUTHORS_SHOWN:])), rest, rest)
 
 
 def pdf_href(doc):
@@ -1363,6 +1365,7 @@ def docling_doc(meta, d, pages=None):
             for c in item.get("captions", []):
                 caption_ids.add(c["$ref"])
 
+    total_words = sum(words(t.get("text") or "") for t in j.get("texts", []) if t.get("label") not in ("page_header", "page_footer"))
     deferred = []
     front_dropped = []
     seen_head = [False]
@@ -1480,7 +1483,9 @@ def docling_doc(meta, d, pages=None):
             lvl = 2 if (item.get("level") or 1) <= 1 else 3
             if text.isupper() and len(text) > 3:
                 text = text[0] + text[1:].lower()
-            end_matter = bool(END_MATTER.match(text)) and not any(b.get("appendix") for b in doc.blocks)
+            # acknowledgments near the front of a book or thesis don't end the main text
+            end_matter = bool(END_MATTER.match(text)) and not any(b.get("appendix") for b in doc.blocks) and (
+                sum(words(strip_tags(block_text(b))) for b in doc.blocks) >= FRONT_MATTER_SHARE * total_words)
             doc.add(t="h", level=lvl, html=esc(text), appendix=end_matter)
             continue
         surnames = [a.split()[-1] for a in doc.meta.get("authors") or [] if a.split()]
@@ -1530,6 +1535,7 @@ def docling_doc(meta, d, pages=None):
     return doc
 
 
+FRONT_MATTER_SHARE = 0.25  # end matter can't begin before this share of the document's words
 TABLE_NOTE = re.compile(r"^(Notes?[:.]\s|Sources?:\s|[A-Z][A-Za-z]{0,5}: [A-Z]?[a-z]|[*∗†‡]+\s?p\s?[<=≤])")
 CAPTION_LIKE = re.compile(r"^((?:Fig(?:ure)?|Table|TABLE|FIGURE)\.?\s*[A-Z]?\d+(?:\.\d+)?[.:])\s*(.+)$", re.S)
 TABLE_NOTE_GLUED = re.compile(r"(?<=[a-z,]) ((?:[A-Z]{1,5}: [a-z][a-z ,()-]{2,80}\.\s?)+)$")
@@ -1611,7 +1617,7 @@ def link_references(doc, raw):
         def numfix(m):
             rid = keys.get((m.group(1).lower(), m.group(2)))
             return doc.cite([rid], m.group(0)) if rid else m.group(0)
-        pat = re.compile(r"\b([A-ZÀ-Ý][\w'’-]+)(?:\s+et al\.?|\s+(?:and|&amp;)\s+[A-ZÀ-Ý][\w'’-]+)?,?\s+\(?((?:1[89]|20)\d\d[a-z]?)\b")
+        pat = re.compile(r"\b(?:(?:[Vv]an|[Vv]on|[Dd]e|[Dd]er|[Dd]en|[Dd]u|[Ll]a|[Ll]e)\s+)*([A-ZÀ-Ý][\w'’-]+)(?:\s+et al\.?|\s+(?:and|&amp;)\s+[A-ZÀ-Ý][\w'’-]+)?,?\s+\(?((?:1[89]|20)\d\d[a-z]?)\b")
     for b in doc.blocks:
         if b["t"] == "p":
             b["html"] = pat.sub(numfix, b["html"])

@@ -193,6 +193,17 @@
     document.body.appendChild(t); setTimeout(function () { t.remove(); }, ms || 5000); return t;
   }
 
+  /* ---------- long author lists ---------- */
+  var auToggle = document.getElementById("au-toggle");
+  var auRest = document.getElementById("au-rest");
+  if (auToggle && auRest) auToggle.addEventListener("click", function () {
+    var open = auToggle.getAttribute("aria-expanded") !== "true";
+    auToggle.setAttribute("aria-expanded", String(open));
+    auRest.hidden = !open;
+    auToggle.querySelector(".au-label").textContent = open ? "Show fewer" : auToggle.getAttribute("data-more");
+    measure(); update();
+  });
+
   /* ---------- finished marker ---------- */
   var doneBtn = document.getElementById("mark-done");
   function showDone() {
