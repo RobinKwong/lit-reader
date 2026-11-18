@@ -1637,8 +1637,8 @@ FURNITURE = re.compile(
     r"routledge|taylor & francis group|check for updates|open n? ?access)$", re.I)
 
 
-STAMP_IN_TEXT = re.compile(r"[^©]{0,40}©\s*the author\(s\)\s+\d{4}.{0,240}?(?:journals\.sagepub\.com/home/\w+|sagepub\.com/journals-permissions)\s*", re.I | re.S)
-PUBLISHER_STAMP = re.compile(r"article reuse guidelines|journals-permissions|©\s*the author\(s\)\s+\d{4}\s+https?://", re.I)
+STAMP_IN_TEXT = re.compile(r"(?:[^©]{0,40}©\s*the author\(s\)\s+\d{4}\s*)?(?:https?://doi\.org/\S+\s+)?article reuse guidelines:.{0,160}?journals\.sagepub\.com/home/\w+\s*", re.I | re.S)
+PUBLISHER_STAMP = re.compile(r"article reuse guidelines|journals-permissions|©\s*the author\(s\)\s+\d{4}", re.I)
 
 
 def furniture(text, title):
