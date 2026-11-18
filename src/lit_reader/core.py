@@ -60,6 +60,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -807,11 +808,16 @@ def http_get(url, allowed_hosts):
     if p.scheme != "https" or p.netloc not in allowed_hosts:
         raise ReaderError("refusing to fetch from %s" % p.netloc)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with urllib.request.build_opener(NamedHostsOnly(allowed_hosts)).open(req, timeout=60) as r:
-            return r.read(), r.headers.get("Content-Type", "")
-    except (urllib.error.URLError, OSError) as e:
-        raise ReaderError("could not fetch %s: %s" % (url, e))
+    for attempt in range(3):
+        try:
+            with urllib.request.build_opener(NamedHostsOnly(allowed_hosts)).open(req, timeout=60) as r:
+                return r.read(), r.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
+                raise ReaderError("could not fetch %s: %s" % (url, e))
+            time.sleep(2 * (attempt + 1))  # a busy service often answers on the next try
+        except (urllib.error.URLError, OSError) as e:
+            raise ReaderError("could not fetch %s: %s" % (url, e))
 
 
 def image_kind(data):
@@ -2179,10 +2185,7 @@ def open_pmcid(meta):
         return meta["pmcid"]
     if not meta.get("doi"):
         return None
-    try:
-        r = epmc_record('DOI:"%s"' % meta["doi"])
-    except ReaderError:
-        return None
+    r = epmc_record('DOI:"%s"' % meta["doi"])  # an outage is reported, not mistaken for "no open text"
     if r and r.get("pmcid") and r.get("isOpenAccess") == "Y" and r.get("inEPMC") == "Y":
         return r["pmcid"]
     return None
@@ -2245,7 +2248,9 @@ def take_route(want, meta, d, pdf, pages):
             print("  %s route unavailable: %s" % (route, e))
     if want not in ("auto", "online") and not tried:
         raise ReaderError("the %s route doesn't apply to this input" % want)
-    raise ReaderError("no open full text found. Download the PDF and run: lit-reader paper.pdf" + ("\n  " + "\n  ".join(tried) if tried else ""))
+    if tried:
+        raise ReaderError("couldn't get the full text:\n  %s\nTry again later, or download the PDF and run: lit-reader paper.pdf" % "\n  ".join(tried))
+    raise ReaderError("no open full text found. Download the PDF and run: lit-reader paper.pdf")
 
 
 def cmd_standalone(a):
