@@ -161,6 +161,7 @@
     document.body.appendChild(card);
     var r = a.getBoundingClientRect();
     var top = window.scrollY + r.bottom + 6;
+    if (r.bottom + 6 + card.offsetHeight > window.innerHeight) top = Math.max(window.scrollY + 56, window.scrollY + r.top - card.offsetHeight - 6);
     var left = Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - card.offsetWidth - 12);
     card.style.top = top + "px"; card.style.left = Math.max(8, left) + "px";
     card.addEventListener("keydown", function (e) {

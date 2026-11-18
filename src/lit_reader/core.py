@@ -344,7 +344,7 @@ class Inline(object):
         if t in ("ul", "ol", "li", "list", "list-item"):
             tag = {"list": "ul", "list-item": "li"}.get(t, t)
             return "<%s>%s</%s>" % (tag, self.run(k), tag)
-        if t in ("p", "div") and k.parent is not None and k.parent.tag in ("td", "th", "li", "list-item"):
+        if t == "p" or (t == "div" and k.parent is not None and k.parent.tag in ("td", "th", "li", "list-item")):
             return self.run(k) + " "
         return self.run(k)
 
@@ -915,6 +915,9 @@ def cmd_fetch(a):
 # Route: arXiv HTML
 # --------------------------------------------------------------------------
 
+ARXIV_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "figure", "table", "ul", "ol", "dl"}
+
+
 class ArxivInline(Inline):
     def rule(self, n):
         c = n.cls()
@@ -964,6 +967,8 @@ def arxiv_doc(meta, d):
     doc._crops = docling_crops(d, doc.pdf)
     t = art.find(lambda x: "ltx_title_document" in x.cls())
     if t is not None:
+        for n in t.findall(lambda x: "ltx_note" in x.cls()):
+            n.kids = []  # a note on the title has no place in the heading or the browser tab
         doc.meta["title_html"] = ArxivInline(Doc({})).run(t).strip()
 
     ab = art.find(lambda x: "ltx_abstract" in x.cls())
@@ -1032,9 +1037,13 @@ def arxiv_doc(meta, d):
                 doc.add(t="list", ordered=k.tag == "ol", items=items)
                 continue
             if k.tag == "table" and c & {"ltx_equation", "ltx_equationgroup"}:
-                maths = [math_html(mm) for mm in k.findall(lambda x: x.tag == "math")]
-                tags = [x.text().strip() for x in k.findall(lambda x: "ltx_tag_equation" in x.cls())]
-                doc.add(t="eq", html=" ".join(maths) + ("&emsp;" + esc(tags[0]) if tags else ""))
+                rows = [r for r in k.findall(lambda x: x.tag == "tr") if r.find(lambda x: x.tag == "math") is not None] or [k]
+                parts = []
+                for r in rows:
+                    tag = r.find(lambda x: "ltx_tag_equation" in x.cls())
+                    parts.append(" ".join(math_html(mm) for mm in r.findall(lambda x: x.tag == "math")) + ("&emsp;" + esc(tag.text().strip()) if tag is not None else ""))
+                targets = [x.attrs["id"] for x in [k] + k.findall(lambda x: re.search(r"\.E\d+$", x.attrs.get("id", "")) is not None) if x.attrs.get("id")]
+                doc.add(t="eq", html="".join('<span id="x-%s"></span>' % safe_id(i) for i in dict.fromkeys(targets)) + "<br>".join(parts))
                 continue
             if k.tag == "table" and "ltx_tabular" in c:
                 doc.add(t="fig", kind="table", label="", caption="", imgs=[], table=ix.one(k))
@@ -1042,6 +1051,26 @@ def arxiv_doc(meta, d):
             if "ltx_listing" in c:
                 lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
                 doc.add(t="pre", text="\n".join(lines))
+                continue
+            if k.tag == "dl":
+                terms = [c for c in k.children() if c.tag in ("dt", "dd")]
+                items = ["<strong>%s</strong> %s" % (ix.run(a).strip(), ix.run(b).strip()) for a, b in zip(terms[::2], terms[1::2])]
+                doc.add(t="list", ordered=False, plain=True, items=items)
+                continue
+            if any(isinstance(x, str) and x.strip() for x in k.kids):  # text sitting directly in a container
+                run = Node("p", parent=k)
+                for x in k.kids + [None]:
+                    if x is None or (isinstance(x, Node) and x.tag in ARXIV_BLOCKS):
+                        h = ix.run(run).strip()
+                        if h:
+                            doc.add(t="p", html=h)
+                        run.kids = []
+                        if x is not None:
+                            one = Node(k.tag, parent=k.parent)
+                            one.kids = [x]
+                            walk(one, depth, appendix)
+                    else:
+                        run.kids.append(x)
                 continue
             walk(k, depth, appendix)
 
@@ -1085,6 +1114,16 @@ def arxiv_figure(doc, ix, k, imgdir):
             p = p.parent
         return True
     table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table") if outer_table(t))
+    if not imgs and not table:  # an algorithm or other float made of text
+        lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
+        def in_caption(p):
+            while p is not None and p is not k:
+                if p.tag == "figcaption":
+                    return True
+                p = p.parent
+            return False
+        body = [ix.run(p).strip() for p in k.findall(lambda x: x.tag == "p") if not in_caption(p)]
+        table = '<pre class="listing">%s</pre>' % esc("\n".join(lines)) if lines else "".join("<p>%s</p>" % b for b in body if b)
     kind = "table" if "ltx_table" in k.cls() else "figure"
     fid = "x-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None
     if not label and not caption and not imgs and not table:
@@ -1254,7 +1293,11 @@ def jats_doc(meta, d):
         for ab in full or all_abstracts:
             title = ab.find(lambda x: x.tag == "title" and x.parent is ab)
             head = title.text().strip() if title is not None else "Abstract"
-            paras = [ix.run(p).strip() for p in ab.findall(lambda x: x.tag == "p")]
+            paras = []
+            for p in ab.findall(lambda x: x.tag == "p"):
+                sec = p.parent if p.parent is not None and p.parent.tag == "sec" else None
+                label = sec.find(lambda x: x.tag == "title" and x.parent is sec) if sec is not None and sec.find(lambda x: x.tag == "p") is p else None
+                paras.append(("<strong>%s</strong> " % ix.run(label).strip().rstrip(":.") if label is not None else "") + ix.run(p).strip())
             doc.abstracts.append((head, "".join("<p>%s</p>" % p for p in paras if p)))
 
     def walk(n, depth, appendix=False):
@@ -1293,6 +1336,13 @@ def jats_doc(meta, d):
                 cap = k.find(lambda x: x.tag == "caption")
                 if cap is not None:
                     doc.add(t="p", html="<em>Supplementary material (not held locally):</em> " + ix.run(cap).strip())
+            elif t == "def-list":
+                items = []
+                for di in k.findall(lambda x: x.tag == "def-item"):
+                    term, meaning = di.find(lambda x: x.tag == "term"), di.find(lambda x: x.tag == "def")
+                    items.append(" ".join(x for x in ["<strong>%s</strong>" % ix.run(term).strip() if term is not None else "",
+                                                      ix.run(meaning).strip() if meaning is not None else ""] if x))
+                doc.add(t="list", ordered=False, plain=True, items=items)
             elif t in ("title", "label", "ref-list"):
                 continue
             else:
@@ -1331,7 +1381,8 @@ def jats_doc(meta, d):
         elif t == "disp-formula":
             lab = k.find(lambda x: x.tag == "label" and x.parent is k)
             html_ = formula_html(k, doc)
-            doc.add(t="eq", html=html_ + ("&emsp;" + esc(lab.text().strip()) if lab is not None else "") if html_ else ix.run(k))
+            target = '<span id="j-%s"></span>' % safe_id(k.attrs["id"]) if k.attrs.get("id") else ""
+            doc.add(t="eq", html=target + (html_ + ("&emsp;" + esc(lab.text().strip()) if lab is not None else "") if html_ else ix.run(k)))
         elif t == "list":
             items = [ix.run(li).strip() for li in k.children() if li.tag == "list-item"]
             labelled = any(c.tag == "label" for li in k.children() if li.tag == "list-item" for c in li.children())
@@ -1419,9 +1470,12 @@ def crop_png(pdf, page, bbox, page_h, dpi=170):
         root = Path(tmp) / "crop"
         png = Path(tmp) / "crop.png"
         # pdftoppm 26 writes nothing when the output root is "-", so go through a file
-        r_ = subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-r", str(dpi), "-x", str(x), "-y", str(y),
-                             "-W", str(w), "-H", str(h), "-png", "-singlefile", "--", str(pdf), str(root)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        try:
+            r_ = subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-r", str(dpi), "-x", str(x), "-y", str(y),
+                                 "-W", str(w), "-H", str(h), "-png", "-singlefile", "--", str(pdf), str(root)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        except subprocess.TimeoutExpired:
+            return None  # one very slow page shouldn't stop the build
         return png.read_bytes() if r_.returncode == 0 and png.exists() else None
 
 
@@ -2133,13 +2187,23 @@ def parse_input(text):
     raise ReaderError("not a PDF, arXiv ID, DOI or PMCID: %s" % text)
 
 
+def read_json(body, service):
+    try:
+        return json.loads(body.decode("utf-8"))
+    except ValueError:
+        raise ReaderError("%s sent an unreadable reply" % service)
+
+
 def clean_title(t):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", t or ""))).strip().rstrip(".")
 
 
 def arxiv_meta(aid):
     body, _ = http_get("https://export.arxiv.org/api/query?id_list=%s" % urllib.parse.quote(aid, safe="/.v"), {"export.arxiv.org"})
-    e = ET.fromstring(body).find(ATOM + "entry")
+    try:
+        e = ET.fromstring(body).find(ATOM + "entry")
+    except ET.ParseError:
+        raise ReaderError("arXiv sent an unreadable reply for %s" % aid)
     if e is None or e.find(ATOM + "published") is None:
         raise ReaderError("arXiv has no paper %s" % aid)
     return {"pid": "arxiv:" + aid, "title": clean_title(e.findtext(ATOM + "title")),
@@ -2150,7 +2214,7 @@ def arxiv_meta(aid):
 
 def crossref_meta(doi):
     body, _ = http_get("https://api.crossref.org/works/%s" % urllib.parse.quote(doi, safe=""), {"api.crossref.org"})
-    m = json.loads(body.decode("utf-8"))["message"]
+    m = read_json(body, "Crossref")["message"]
     authors = [" ".join(x for x in (a.get("given"), a.get("family")) if x) or a.get("name", "") for a in m.get("author", [])]
     parts = ((m.get("issued") or {}).get("date-parts") or [[None]])[0]
     return {"pid": "doi:" + doi, "title": clean_title((m.get("title") or [""])[0]), "authors": [a for a in authors if a],
@@ -2160,7 +2224,7 @@ def crossref_meta(doi):
 
 def epmc_record(query):
     body, _ = http_get(EPMC + urllib.parse.quote(query, safe=""), {"www.ebi.ac.uk"})
-    res = json.loads(body.decode("utf-8")).get("resultList", {}).get("result", [])
+    res = read_json(body, "Europe PMC").get("resultList", {}).get("result", [])
     return res[0] if res else None
 
 
@@ -2186,7 +2250,10 @@ def pdf_to_text(pdf, out):
     """pdftotext's reading of the PDF, or None without poppler."""
     if not shutil.which("pdftotext"):
         return None
-    r = subprocess.run(["pdftotext", "-enc", "UTF-8", str(pdf), str(out)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+    try:
+        r = subprocess.run(["pdftotext", "-enc", "UTF-8", str(pdf), str(out)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=180)
+    except subprocess.TimeoutExpired:
+        return None
     return out if r.returncode == 0 and out.exists() else None
 
 
@@ -2196,7 +2263,10 @@ def on_first_page(title, first):
 
 
 def guess_title(pdf, first):
-    r = subprocess.run(["pdfinfo", str(pdf)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60) if shutil.which("pdfinfo") else None
+    try:
+        r = subprocess.run(["pdfinfo", str(pdf)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60) if shutil.which("pdfinfo") else None
+    except subprocess.TimeoutExpired:
+        r = None
     m = re.search(r"^Title:\s*(.+)$", r.stdout.decode("utf-8", "replace"), re.M) if r and r.returncode == 0 else None
     t = m.group(1).strip() if m else ""
     if len(t.split()) >= 3 and not re.search(r"\.(pdf|docx?|tex|indd)$|microsoft word|untitled", t, re.I):
