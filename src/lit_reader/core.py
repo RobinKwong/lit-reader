@@ -493,7 +493,7 @@ def render(doc, list_line=None, list_pos=None):
                 safe_id(str(b["label"])), (pdf_anchor(doc, b) or "p. " + esc(str(b["label"])))))
         elif t == "list":
             tag = "ol" if b.get("ordered") else "ul"
-            out.append("<%s %s>%s</%s>" % (tag, common, "".join("<li>%s</li>" % x for x in b["items"]), tag))
+            out.append('<%s %s%s>%s</%s>' % (tag, common, ' class="plain"' if b.get("plain") else "", "".join("<li>%s</li>" % x for x in b["items"]), tag))
         elif t == "eq":
             out.append('<div class="eq" %s>%s</div>' % (common, b["html"]))
         elif t == "pre":
@@ -503,7 +503,7 @@ def render(doc, list_line=None, list_pos=None):
             for src, alt in b.get("imgs") or []:
                 parts.append(img_tag(src, alt))
             if b.get("table"):
-                parts.append('<div class="tablewrap">%s</div>' % b["table"])
+                parts.append('<div class="tablewrap" role="region" tabindex="0" aria-label="%s">%s</div>' % (attr((b.get("label") or "Table").rstrip(":. ")), b["table"]))
             if not parts:
                 parts.append('<div class="missing-figure">This %s did not come through in the source. %s</div>' % (
                     "table" if b.get("kind") == "table" else "figure", pdf_link(doc, b.get("page")) or ""))
@@ -519,7 +519,7 @@ def render(doc, list_line=None, list_pos=None):
     # references
     refs_html = ""
     if doc.refs:
-        items = "".join('<li id="ref-%s">%s</li>' % (safe_id(i), h) for i, h in doc.refs)
+        items = "".join('<li id="ref-%s"%s>%s</li>' % (safe_id(i), ' value="%s"' % i if str(i).isdigit() else "", h) for i, h in doc.refs)
         refs_html = ('<section class="references" id="references" data-title="References">'
                      '<h2 id="references-start" data-sec="1" data-title="References" data-w="0" data-in="references" data-body="0">References</h2>'
                      '<details open><summary>%d references (citations in the text open these as cards)</summary><ol>%s</ol></details></section>') % (len(doc.refs), items)
@@ -613,7 +613,7 @@ def chunked(h, target=70):
 
 def pdf_anchor(doc, b):
     if doc.pdf and b.get("pdf"):
-        return '<a href="%s#page=%d" title="Printed page %s. Opens page %d of the PDF.">p. %s</a>' % (
+        return '<a href="%s#page=%d" target="_blank" rel="noopener" title="Printed page %s. Opens page %d of the PDF.">p. %s</a>' % (
             attr(pdf_href(doc)), b["pdf"], attr(str(b["label"])), b["pdf"], esc(str(b["label"])))
     return None
 
@@ -1071,7 +1071,8 @@ def arxiv_figure(doc, ix, k, imgdir):
         if f.exists():
             u = data_uri(f.read_bytes())
             if u:
-                imgs.append((u, img.attrs.get("alt") or (alts[0] if alts else "")))
+                alt = img.attrs.get("alt") or (alts[0] if alts else "")
+                imgs.append((u, label.rstrip(":. ") + ", shown as an image" if label and alt.strip().lower() == "refer to caption" else alt))
     table = ""
     def outer_table(t):
         p = t.parent
@@ -1186,8 +1187,10 @@ class JatsInline(Inline):
             return self.run(n)
         if n.tag in ("inline-formula", "disp-formula", "alternatives"):
             return formula_html(n) or self.run(n)
-        if n.tag in ("label",) and n.parent is not None and n.parent.tag in ("fig", "table-wrap", "ref"):
+        if n.tag in ("label",) and n.parent is not None and n.parent.tag in ("fig", "table-wrap", "ref", "fn"):
             return ""
+        if n.tag == "label" and n.parent is not None and n.parent.tag == "list-item":
+            return self.run(n).strip() + " "
         if n.tag == "title" and n.parent is not None and n.parent.tag == "caption":
             return self.run(n).strip() + " "  # the shared whitelist drops <title>, but here it is the caption's first line
         if n.tag == "ext-link":
@@ -1241,12 +1244,21 @@ def jats_doc(meta, d):
                 walk(k, depth + 1)
             elif t == "p":
                 # a <p> can hold a figure or table; pull those out after the text
-                floats = [c for c in k.children() if c.tag in ("fig", "table-wrap", "disp-formula", "list")]
-                for f in floats:
-                    f.parent.kids = [x for x in f.parent.kids if x is not f]
-                h = ix.run(k).strip()
-                if h:
-                    doc.add(t="p", html=h)
+                # equations and lists stay where they fall in the sentence; figures and tables follow the paragraph
+                floats, cur = [c for c in k.children() if c.tag in ("fig", "table-wrap")], Node("p", parent=k.parent)
+
+                def emit():
+                    h = ix.run(cur).strip()
+                    if h:
+                        doc.add(t="p", html=h)
+                    cur.kids = []
+                for kid in k.kids:
+                    if isinstance(kid, Node) and kid.tag in ("disp-formula", "list"):
+                        emit()
+                        walk_one(kid)
+                    elif not (isinstance(kid, Node) and kid.tag in ("fig", "table-wrap")):
+                        cur.kids.append(kid)
+                emit()
                 for f in floats:
                     walk_one(f)
             elif t in ("fig", "table-wrap", "disp-formula", "list"):
@@ -1273,7 +1285,7 @@ def jats_doc(meta, d):
                 if f is not None:
                     u = data_uri(f.read_bytes())
                     if u:
-                        imgs.append((u, "%s, shown as an image" % (label.text().strip().rstrip(".:") if label is not None else "Table") if t == "table-wrap" else ""))
+                        imgs.append((u, "%s, shown as an image" % (label.text().strip().rstrip(".:") if label is not None else ("Table" if t == "table-wrap" else "Figure"))))
             table = ""
             tb = k.find(lambda x: x.tag == "table")
             if tb is not None:
@@ -1290,7 +1302,9 @@ def jats_doc(meta, d):
             doc.add(t="eq", html=formula_html(k) or ix.run(k))
         elif t == "list":
             items = [ix.run(li).strip() for li in k.children() if li.tag == "list-item"]
-            doc.add(t="list", ordered=k.attrs.get("list-type") in ("order", "arabic", "alpha-lower", "roman-lower"), items=items)
+            labelled = any(c.tag == "label" for li in k.children() if li.tag == "list-item" for c in li.children())
+            doc.add(t="list", ordered=not labelled and k.attrs.get("list-type") in ("order", "arabic", "alpha-lower", "roman-lower"),
+                    plain=labelled, items=items)
 
     body = root.find(lambda x: x.tag == "body")
     if body is not None:
@@ -1400,7 +1414,7 @@ def word_list():
 def join_drop_cap(text):
     """'H uman' is a drop cap read as its own word; 'T cells' is not."""
     m = re.match(r"^([B-HJ-Z]) ([a-z]+)", text)
-    if m:
+    if m and m.group(2) not in ("is", "are", "was", "were", "be", "in", "of", "and", "or", "to", "at", "on", "as", "has", "can", "may", "cells"):
         w = (m.group(1) + m.group(2)).lower()
         stems = [w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("ed") else w, w[:-1] if w.endswith("ed") else w,
                  w[:-3] if w.endswith("ing") else w, w[:-3] + "e" if w.endswith("ing") else w]
@@ -1437,6 +1451,46 @@ def docling_doc(meta, d, pages=None):
     def resolve(ref):
         kind, idx = ref["$ref"].split("/")[1], int(ref["$ref"].split("/")[2])
         return kind, j[kind][idx]
+
+    # one figure can arrive as several pictures, with its labels read as text: gather them under the caption
+    float_box, absorbed, figure_areas = {}, set(), {}
+    pictures = [x for x in j.get("pictures", []) if x.get("prov")]
+
+    def area(it):
+        pg = it["prov"][0]["page_no"]
+        return docling_box(it["prov"][0]["bbox"], page_h.get(pg, 792))
+    for pic in pictures:
+        if not pic.get("captions"):
+            continue
+        pg = pic["prov"][0]["page_no"]
+        l, t, r, b = area(pic)
+        for other in pictures:
+            if other is pic or other.get("captions") or other["prov"][0]["page_no"] != pg:
+                continue
+            ol, ot, orr, ob = area(other)
+            if ob <= t + 30 and ot >= b - 30:
+                l, t, r, b = min(l, ol), max(t, ot), max(r, orr), min(b, ob)
+                absorbed.add(other.get("self_ref"))
+        cap = resolve(pic["captions"][0])[1]
+        if cap.get("prov"):
+            cl, _, cr, _ = area(cap)
+            if cr - cl > 1.25 * (r - l):  # the caption spans the whole figure; the picture found is only part of it
+                l, r = min(l, cl), max(r, cr)
+        float_box[pic.get("self_ref")] = (l, t, r, b)
+        figure_areas.setdefault(pg, []).append((l, t + 12, r, b))
+    head_counts = Counter((t.get("text") or "").strip() for t in j.get("texts", []) if t.get("label") == "section_header")
+
+    def figure_text(item, text):
+        """A label drawn inside a figure, which Docling reads as text or a heading."""
+        if not item.get("prov") or len(text) >= 80:
+            return False
+        pg = item["prov"][0]["page_no"]
+        il, it, ir, ib = area(item)
+        cx, cy = (il + ir) / 2, (it + ib) / 2
+        for l, t, r, b in figure_areas.get(pg, []):
+            if l <= cx <= r and (b <= cy <= t or (head_counts[text] >= 2 and 0 <= ib - t <= 55)):
+                return True
+        return False
 
     # reading order: the body tree, flattening groups
     order = []
@@ -1533,6 +1587,8 @@ def docling_doc(meta, d, pages=None):
         if label in ("text", "paragraph", "list_item", "footnote", "caption", "section_header", "title", "formula", "code", "checkbox_selected", "checkbox_unselected", "reference"):
             if WATERMARK.match(text):
                 continue
+        if kind in ("pictures", "tables") and item.get("self_ref") in absorbed:
+            continue
         if kind in ("pictures", "tables"):
             pnum = p
             caps = [resolve(c)[1].get("text", "") for c in item.get("captions", [])]
@@ -1544,13 +1600,11 @@ def docling_doc(meta, d, pages=None):
             imgs = []
             if pnum and doc.pdf:
                 bb = prov[0]["bbox"]
-                box = (bb["l"], bb["t"], bb["r"], bb["b"]) if bb.get("coord_origin", "BOTTOMLEFT") == "BOTTOMLEFT" else \
-                    (bb["l"], page_h[pnum] - bb["t"], bb["r"], page_h[pnum] - bb["b"])
+                box = float_box.get(item.get("self_ref")) or docling_box(bb, page_h.get(pnum, 792))
                 png = crop_png(doc.pdf, pnum + offset, box, page_h.get(pnum, 792))
                 u = data_uri(png) if png else None
                 if u:
-                    # a figure's caption follows it; a table's data is only in the picture, so say so
-                    imgs.append((u, "%s, shown as an image" % (lab.rstrip(".: ") or "Table") if kind == "tables" else ""))
+                    imgs.append((u, "%s, shown as an image" % (lab.rstrip(".: ") or ("Table" if kind == "tables" else "Figure"))))
             if not imgs and not cap_text:
                 continue
             bb = prov[0].get("bbox") or {}
@@ -1585,7 +1639,8 @@ def docling_doc(meta, d, pages=None):
                 doc.add(t="eq", html=img_tag(u, "Equation"))
                 pending = held
             continue
-        if not text or furniture(text, doc.meta.get("title")):
+        real_heading = label == "section_header" and p and p > 2 and re.fullmatch(r"perspectives?|reviews?|reports?|artificial intelligence", text, re.I)
+        if not text or figure_text(item, text) or (furniture(text, doc.meta.get("title")) and not real_heading):
             continue
         last = doc.blocks[-1] if doc.blocks else None
         cm = CAPTION_LIKE.match(text)
@@ -1622,7 +1677,7 @@ def docling_doc(meta, d, pages=None):
             if numbered:  # Docling often flattens levels; "3.2" says where it belongs
                 lvl = 3 if numbered.group(1) else 2
             if text.isupper() and len(text) > 3:
-                text = text[0] + text[1:].lower()
+                text = re.sub(r"[^\W\d_]", lambda c: c.group(0).upper(), text.lower(), count=1)
             # acknowledgments near the front of a book or thesis don't end the main text
             end_matter = bool(END_MATTER.match(text)) and not any(b.get("appendix") for b in doc.blocks) and (
                 sum(words(strip_tags(block_text(b))) for b in doc.blocks) >= FRONT_MATTER_SHARE * total_words)
@@ -1668,6 +1723,7 @@ def docling_doc(meta, d, pages=None):
         page_marker(p)
         pending = join_drop_cap(text)
     flush()
+    link_endnotes(doc)
     link_references(doc, refs_raw)
     if front_dropped:
         print("  dropped %d short lines before the first heading: %s" % (
@@ -1688,7 +1744,7 @@ FURNITURE = re.compile(
 
 
 STAMP_IN_TEXT = re.compile(r"(?:[^©]{0,40}©\s*the author\(s\)\s+\d{4}\s*)?(?:https?://doi\.org/\S+\s+)?article reuse guidelines:.{0,160}?journals\.sagepub\.com/home/\w+\s*", re.I | re.S)
-PUBLISHER_STAMP = re.compile(r"article reuse guidelines|journals-permissions|©\s*the author\(s\)\s+\d{4}", re.I)
+PUBLISHER_STAMP = re.compile(r"provided proper attribution is provided|article reuse guidelines|journals-permissions|©\s*the author\(s\)\s+\d{4}", re.I)
 
 
 def furniture(text, title):
@@ -1712,6 +1768,47 @@ END_MATTER = re.compile(r"^\s*(acknowledg|supplementary|funding|author contribut
 REFS_HEAD = re.compile(r"^\s*(references(\s+and\s+notes)?|bibliography|works cited|literature cited)\s*$", re.I)
 
 
+NOTES_HEAD = re.compile(r"^\s*(end)?notes\s*$", re.I)
+NOT_A_NOTE = {"in", "of", "to", "the", "and", "or", "at", "by", "for", "from", "with", "than", "about", "over", "under", "around", "only",
+              "table", "tables", "figure", "figures", "fig", "section", "page", "pages", "chapter", "study", "studies", "model", "models",
+              "wave", "group", "groups", "hypothesis", "step", "part", "experiment", "round", "day", "week", "year", "appendix", "h"}
+
+
+def link_endnotes(doc):
+    """Numbered endnotes whose markers lost their superscript: "four expectations 1 regarding".
+    Markers must appear in order, 1, 2, 3 ..., which keeps ordinary numbers from matching."""
+    start = next((i for i, b in enumerate(doc.blocks) if b["t"] == "h" and NOTES_HEAD.match(strip_tags(b["html"]))), None)
+    if start is None:
+        return
+    notes = {}
+    for b in doc.blocks[start + 1:]:
+        if b["t"] == "h":
+            break
+        for k, h in enumerate(b["items"] if b["t"] == "list" else [b.get("html", "")] if b["t"] == "p" else [], 1):
+            m = re.match(r"^(?:<small>)?\s*(\d{1,3})[.)]?\s+(.*?)(?:</small>)?$", h, re.S)
+            if m:
+                notes[int(m.group(1))] = m.group(2)
+            elif b["t"] == "list":  # Docling keeps a list's numbers apart from its text
+                notes[k] = h
+    n, i, pos = 1, 0, 0
+    while n in notes and i < start:
+        b = doc.blocks[i]
+        hit = None
+        if b["t"] == "p":
+            for m in re.finditer(r"(?<=[^\W\d_][,.;:?!”’\")]|[^\W\d_]{2}) (%d)(?=[ .,;:)]|$)" % n, b["html"][pos:]):
+                word = re.search(r"([^\W\d_]+)[,.;:?!”’\")]*$", b["html"][:pos + m.start()])
+                if word and word.group(1).lower() not in NOT_A_NOTE:
+                    hit = m
+                    break
+        if hit is None:
+            i, pos = i + 1, 0
+            continue
+        note = doc.note(notes[n])
+        b["html"] = b["html"][:pos + hit.start()] + note + b["html"][pos + hit.end():]
+        pos += hit.start() + len(note)
+        n += 1
+
+
 def link_references(doc, raw):
     """Turn the PDF's reference list into doc.refs and link the citations in
     the text: numbered "(19)" / "(5, 8-10)" style, or author-year style."""
@@ -1731,6 +1828,11 @@ def link_references(doc, raw):
         known = set(n for n, _ in doc.refs)
 
         def numfix(m):
+            before, after = m.string[max(0, m.start() - 14):m.start()], m.string[m.end():m.end() + 3]
+            if re.search(r"(?i)\b(eqs?\.?|equations?|figs?\.?|figures?|tables?|sections?|steps?|models?|hypothes[ie]s)\s*$", before):
+                return m.group(0)  # "Eq. (3)" is not a citation
+            if m.group(1) == "(" and re.fullmatch(r"\d", m.group(2)) and re.match(r"\s[a-z]", after) and re.search(r"(^|[:;,]|\b(?:and|or))\s*$", before):
+                return m.group(0)  # "two aims: (1) trust and (2) recall"
             out, linked = [], False
             for x in re.split(r"(\s*,\s*)", m.group(2)):
                 r = re.fullmatch(r"(\d{1,3})\s*[–-]\s*(\d{1,3})", x)
@@ -2239,6 +2341,8 @@ def take_route(want, meta, d, pdf, pages):
                 need_tool("pdftoppm", "The PDF route")
                 need_tool("pdftotext", "The PDF route")
                 meta["pdf_path"], meta["pdf_href"] = pdf, "paper.pdf"
+                if meta.get("arxiv"):
+                    meta["url"] = "https://arxiv.org/abs/%s" % meta["arxiv"]
                 meta["text_path"], meta["text_label"] = pdf_to_text(pdf, d / "paper.txt"), "PDF's text"
                 if not sorted((d / "docling").glob("*.json")):
                     run_docling(pdf, d, pages)

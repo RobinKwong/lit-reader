@@ -124,7 +124,10 @@
     card.remove(); card = null;
     if (refocus && cardFrom) cardFrom.focus();
   }
-  document.querySelectorAll("a.cite").forEach(function (a) { a.setAttribute("aria-haspopup", "dialog"); });
+  document.querySelectorAll("a.cite").forEach(function (a) {
+    a.setAttribute("aria-haspopup", "dialog");
+    if (/^\d/.test(a.textContent)) a.setAttribute("aria-label", "Reference " + a.textContent);
+  });
   function openCard(a, moveFocus) {
     closeCard();
     cardFrom = a;
@@ -283,7 +286,7 @@
     if (!location.hash && st.pos && st.pos !== (blocks[0] && blocks[0].id)) {
       var el = document.getElementById(st.pos);
       if (el) {
-        el.scrollIntoView({ block: "start" });
+        window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - Math.max(90, window.innerHeight * 0.3) + 1);  // back on the line position is read from
         el.classList.add("flash-block");
         var t = toast("Resumed where you left off. <button type='button'>Back to the start</button>", 12000);
         t.querySelector("button").addEventListener("click", function () { window.scrollTo(0, 0); t.remove(); });

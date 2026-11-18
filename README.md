@@ -96,6 +96,7 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **DOIs:** a DOI only works when arXiv or Europe PMC has the full text openly available. For a book or a paywalled paper, supply the PDF.
 - **Headings:** the contents sidebar depends on headings that look different from the body text. A plainly typeset manuscript may come through as one long section.
 - **Scanned PDFs:** Docling recognises the text, but the coverage check can't run because the PDF has no text to compare against.
+- **Figures and tables as images:** in PDFs, and in some Europe PMC papers, a screen reader can reach a table's caption but not its data.
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Screens:** lit-reader is designed for reading on a laptop or desktop. Pages adapt to narrow screens, but they haven't been tested on a real phone, and each page needs the `assets` folder beside it.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
