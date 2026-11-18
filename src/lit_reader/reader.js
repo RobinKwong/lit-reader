@@ -208,8 +208,8 @@
     var sm = Math.max(1, Math.round(secLeft / WPM)), bm = Math.round(bodyLeft / WPM);
     if (where) {
       var t = sectionTitle(cur.sec);
-      where.textContent = window.innerWidth < 560
-        ? sm + " min left" + (t ? " · " + t : "")
+      where.textContent = !secLeft ? t  // the reference list has no reading time
+        : window.innerWidth < 560 ? sm + " min left" + (t ? " · " + t : "")
         : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body ? " · " + bm + " min to the end of the main text" : "");
     }
     if (bar && bodyTotal) bar.style.width = (100 * (1 - bodyLeft / bodyTotal)) + "%";

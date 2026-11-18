@@ -507,7 +507,8 @@ def render(doc, list_line=None, list_pos=None):
     refs_html = ""
     if doc.refs:
         items = "".join('<li id="ref-%s">%s</li>' % (safe_id(i), h) for i, h in doc.refs)
-        refs_html = ('<section class="references" id="references"><h2 data-sec="1" data-title="References">References</h2>'
+        refs_html = ('<section class="references" id="references" data-title="References">'
+                     '<h2 id="references-start" data-sec="1" data-title="References" data-w="0" data-in="references" data-body="0">References</h2>'
                      '<details open><summary>%d references (citations in the text open these as cards)</summary><ol>%s</ol></details></section>') % (len(doc.refs), items)
         toc.append((2, "references", "References", 0))
 

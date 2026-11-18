@@ -198,6 +198,8 @@ figcaption .pdf-link { white-space: nowrap; font-size: 12.5px; }
 table.data { border-collapse: collapse; font: 13.5px/1.4 var(--ui); margin: 0 auto; }
 table.data th, table.data td { border-bottom: 1px solid var(--faint); padding: .3rem .6rem; text-align: left; vertical-align: top; }
 table.data thead th { border-bottom: 2px solid var(--muted); }
+table.data table.data { margin: 0; font: inherit; }  /* a label set as a table inside a cell */
+table.data table.data td { border: 0; padding: 0; font-weight: 400; }
 
 /* ---------- references ---------- */
 section.references ol { font-size: .82em; line-height: 1.45; padding-left: 2.2em; }
