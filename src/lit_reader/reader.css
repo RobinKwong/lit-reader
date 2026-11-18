@@ -149,6 +149,7 @@ pre.listing {
   border: 1px solid var(--faint); border-radius: 6px; padding: .8rem 1rem; overflow-x: auto;
 }
 .eq { overflow-x: auto; margin: 0 0 .9em; text-align: center; }
+.eq img { display: inline-block; max-width: 100%; height: auto; background: #fff; border-radius: 3px; }
 math { font-size: 1em; }
 math[display="block"] { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
 .appendix-start { border-top: 1px solid var(--faint); margin-top: 4rem; padding-top: 1rem; }

@@ -283,7 +283,10 @@ def safe_href(h):
     h = (h or "").strip()
     if h.startswith("#"):
         return "#" + safe_id(h[1:])
-    p = urllib.parse.urlparse(h)
+    try:
+        p = urllib.parse.urlparse(h)
+    except ValueError:  # a malformed link in the paper is dropped, not fatal
+        return None
     if p.scheme in ("http", "https") and p.netloc:
         return h
     return None
@@ -418,6 +421,15 @@ def img_tag(src, alt):
     return '<img src="%s" alt="%s"%s loading="lazy">' % (src, attr(alt), dims)
 
 
+def heading_text(h):
+    """A heading's words, without any footnote attached to it."""
+    def words_of(n):
+        if isinstance(n, str):
+            return n
+        return "" if n.cls() & {"sn-mark", "sidenote"} else "".join(words_of(k) for k in n.kids)
+    return words_of(parse_html(h))
+
+
 def pdf_href(doc):
     """Standalone pages link to their own copy of the PDF, so no local path is written into the page."""
     return doc.meta.get("pdf_href") or doc.pdf.as_uri()
@@ -453,7 +465,7 @@ def render(doc, list_line=None, list_pos=None):
         t = b["t"]
         bid += 1
         if t == "h":
-            hid = b.get("id") or "s-" + safe_id(strip_tags(b["html"]).strip().lower())[:40]
+            hid = b.get("id") or "s-" + safe_id(heading_text(b["html"]).strip().lower())[:40]
             while hid in used:
                 hid += "-"
             used.add(hid)
@@ -463,7 +475,7 @@ def render(doc, list_line=None, list_pos=None):
                 out.append('<div class="appendix-start"></div>')
             lvl = min(max(b["level"], 2), 4)
             b["html"] = re.sub(r"\.\s*$", "", b["html"].strip())  # run-in heads: "Control Variables."
-            title = strip_tags(b["html"]).strip()
+            title = heading_text(b["html"]).strip()
             no = '<span class="secno">%s</span>' % esc(b["no"]) if b.get("no") else ""
             out.append('<h%d id="%s" data-sec="1" data-title="%s">%s%s</h%d>' % (
                 lvl, hid, attr(((b.get("no") or "") + " " + title).strip()), no, b["html"], lvl))
@@ -835,14 +847,13 @@ def fetch_arxiv(aid, d):
         src = img.attrs.get("src", "")
         if not src or src.startswith("data:") or src.startswith("http"):
             continue
-        full = urllib.parse.urljoin(url, src)
         name = safe_id(src)
         target = imgs / name
         if target.exists():
             continue
         try:
-            data, _ = http_get(full, {"arxiv.org"})
-        except ReaderError as e:
+            data, _ = http_get(urllib.parse.urljoin(url, src), {"arxiv.org"})
+        except (ReaderError, ValueError) as e:
             print("  image failed: %s (%s)" % (src, e))
             continue
         if image_kind(data):
@@ -899,7 +910,7 @@ class ArxivInline(Inline):
     def rule(self, n):
         c = n.cls()
         if n.tag == "span" and "ltx_note" in c:
-            if "ltx_role_footnote" in c:
+            if c & {"ltx_role_footnote", "ltx_role_footnotetext"}:
                 content = n.find(lambda x: "ltx_note_content" in x.cls())
                 if content is None:
                     return ""
@@ -1016,6 +1027,9 @@ def arxiv_doc(meta, d):
                 tags = [x.text().strip() for x in k.findall(lambda x: "ltx_tag_equation" in x.cls())]
                 doc.add(t="eq", html=" ".join(maths) + ("&emsp;" + esc(tags[0]) if tags else ""))
                 continue
+            if k.tag == "table" and "ltx_tabular" in c:
+                doc.add(t="fig", kind="table", label="", caption="", imgs=[], table=ix.one(k))
+                continue
             if "ltx_listing" in c:
                 lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
                 doc.add(t="pre", text="\n".join(lines))
@@ -1053,9 +1067,14 @@ def arxiv_figure(doc, ix, k, imgdir):
             if u:
                 imgs.append((u, img.attrs.get("alt") or (alts[0] if alts else "")))
     table = ""
-    tb = k.find(lambda x: x.tag == "table")
-    if tb is not None:
-        table = ix.one(tb)
+    def outer_table(t):
+        p = t.parent
+        while p is not None and p is not k:
+            if p.tag == "table":
+                return False
+            p = p.parent
+        return True
+    table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table") if outer_table(t))
     kind = "table" if "ltx_table" in k.cls() else "figure"
     fid = "x-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None
     if not label and not caption and not imgs and not table:
@@ -1125,6 +1144,15 @@ def find_pdf_page(doc, label):
 # Route: JATS (Europe PMC)
 # --------------------------------------------------------------------------
 
+def formula_html(n):
+    """MathML if the article has it, otherwise its TeX source as written."""
+    m = n.find(lambda x: x.tag == "math")
+    if m is not None:
+        return math_html(m)
+    tex = n.find(lambda x: x.tag == "tex-math")
+    return "<code>%s</code>" % esc(tex.text().strip()) if tex is not None else ""
+
+
 class JatsInline(Inline):
     def rule(self, n):
         if n.tag in ("name", "string-name") and n.find(lambda x: x.tag == "surname") is not None:
@@ -1151,8 +1179,7 @@ class JatsInline(Inline):
                     return self.doc.note(self.run(fn).strip())
             return self.run(n)
         if n.tag in ("inline-formula", "disp-formula", "alternatives"):
-            m = n.find(lambda x: x.tag == "math")
-            return math_html(m) if m is not None else self.run(n)
+            return formula_html(n) or self.run(n)
         if n.tag in ("label",) and n.parent is not None and n.parent.tag in ("fig", "table-wrap", "ref"):
             return ""
         if n.tag == "title" and n.parent is not None and n.parent.tag == "caption":
@@ -1254,8 +1281,7 @@ def jats_doc(meta, d):
                     label=label.text().strip() if label is not None else "",
                     caption=caption, imgs=imgs, table=table)
         elif t == "disp-formula":
-            m = k.find(lambda x: x.tag == "math")
-            doc.add(t="eq", html=math_html(m) if m is not None else ix.run(k))
+            doc.add(t="eq", html=formula_html(k) or ix.run(k))
         elif t == "list":
             items = [ix.run(li).strip() for li in k.children() if li.tag == "list-item"]
             doc.add(t="list", ordered=k.attrs.get("list-type") in ("order", "arabic", "alpha-lower", "roman-lower"), items=items)
@@ -1272,6 +1298,12 @@ def jats_doc(meta, d):
             doc.add(t="h", level=2, html="Acknowledgments", appendix=True)
             for p in ack.findall(lambda x: x.tag == "p"):
                 doc.add(t="p", html=ix.run(p).strip())
+        for k in back.children():  # appendices and sections such as data availability
+            for sec in ([k] if k.tag == "sec" else k.findall(lambda x: x.tag == "app") if k.tag == "app-group" else [k] if k.tag == "app" else []):
+                title = sec.find(lambda x: x.tag == "title" and x.parent is sec)
+                doc.add(t="h", level=2, html=ix.run(title).strip() if title is not None else "Appendix",
+                        appendix=not any(b.get("appendix") for b in doc.blocks))
+                walk(sec, 1)
     for ref in root.findall(lambda x: x.tag == "ref"):  # usually in <back>, but some articles keep them in the body
         cit = ref.find(lambda x: x.tag in ("mixed-citation", "element-citation", "citation"))
         if cit is not None:
@@ -1534,6 +1566,18 @@ def docling_doc(meta, d, pages=None):
             doc.add(t="fig", kind="table" if kind == "tables" else "figure", label=lab, caption=caption,
                     imgs=imgs, table="", page=(pnum + offset) if pnum else None)
             pending = held
+            continue
+        if label == "formula" and not text:  # Docling found an equation but couldn't read it: show it as printed
+            png = crop_png(doc.pdf, p + offset, docling_box(prov[0]["bbox"], page_h.get(p, 792)), page_h.get(p, 792)) if doc.pdf and p else None
+            u = data_uri(png) if png else None
+            if u:
+                held = None
+                if pending is not None and not re.search(r"[.!?:;”\"')\]]$", pending):
+                    held, pending = pending, None  # the sentence carries on after the equation
+                flush()
+                page_marker(p)
+                doc.add(t="eq", html=img_tag(u, "Equation"))
+                pending = held
             continue
         if not text or furniture(text, doc.meta.get("title")):
             continue
@@ -1848,7 +1892,8 @@ def cmd_build(a):
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
     build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part)
-    cmd_index(a)
+    if LIST_FILE.exists():
+        cmd_index(a)
 
 
 def cmd_all(a):
@@ -2077,12 +2122,15 @@ def jats_text(xml, out):
             parts.append(c.tail or "")
 
     def outermost(e):  # a reference list inside the body must not be counted twice
-        if local(e.tag) in ("article-title", "abstract", "body", "ref-list"):
+        if local(e.tag) in ("article-title", "abstract", "body", "ref-list", "ack", "app-group", "app") or (
+                local(e.tag) == "sec" and in_back[0]):
             walk(e)
             parts.append("\n")
         else:
+            in_back[0] = in_back[0] or local(e.tag) == "back"
             for c in e:
                 outermost(c)
+    in_back = [False]
     outermost(ET.parse(str(xml)).getroot())
     out.write_text(" ".join(parts), encoding="utf-8")
     return out

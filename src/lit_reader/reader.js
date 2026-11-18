@@ -59,7 +59,10 @@
         i = Math.max(0, Math.min(SIZES.length - 1, i + (b.id === "size-up" ? 1 : -1)));
         prefs.size = SIZES[i];
       }
+      var anchor = pid && latest && document.getElementById(latest.id);  // the text you were reading stays where it is
+      var was = anchor ? anchor.getBoundingClientRect().top : 0;
       save(PREF_KEY, prefs); applyPrefs();
+      if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - was);
       if (pid) { measure(); update(); }
     });
   }
