@@ -60,6 +60,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 import urllib.error
@@ -1151,13 +1152,30 @@ def find_pdf_page(doc, label):
 # Route: JATS (Europe PMC)
 # --------------------------------------------------------------------------
 
-def formula_html(n):
-    """MathML if the article has it, otherwise its TeX source as written."""
+def parse_xml(path):
+    try:
+        return ET.parse(str(path)).getroot()
+    except ET.ParseError as e:
+        raise ReaderError("the article's XML can't be read: %s" % e)
+
+
+def jats_image(doc, href):
+    base = os.path.basename(href or "")
+    f = next((doc._imgdir / (base + e) for e in ("", ".jpg", ".jpeg", ".png", ".gif") if base and (doc._imgdir / (base + e)).is_file()), None)
+    return data_uri(f.read_bytes()) if f is not None else None
+
+
+def formula_html(n, doc):
+    """MathML if the article has it, then its TeX source, then its picture of the equation."""
     m = n.find(lambda x: x.tag == "math")
     if m is not None:
         return math_html(m)
     tex = n.find(lambda x: x.tag == "tex-math")
-    return "<code>%s</code>" % esc(tex.text().strip()) if tex is not None else ""
+    if tex is not None:
+        return "<code>%s</code>" % esc(tex.text().strip())
+    g = n.find(lambda x: x.tag in ("graphic", "inline-graphic"))
+    u = jats_image(doc, g.attrs.get("href")) if g is not None else None
+    return img_tag(u, "Equation") if u else ""
 
 
 class JatsInline(Inline):
@@ -1186,9 +1204,12 @@ class JatsInline(Inline):
                     return self.doc.note(self.run(fn).strip())
             return self.run(n)
         if n.tag in ("inline-formula", "disp-formula", "alternatives"):
-            return formula_html(n) or self.run(n)
-        if n.tag in ("label",) and n.parent is not None and n.parent.tag in ("fig", "table-wrap", "ref", "fn"):
+            return formula_html(n, self.doc) or self.run(n)
+        if n.tag in ("label",) and n.parent is not None and n.parent.tag in ("fig", "table-wrap", "ref"):
             return ""
+        if n.tag == "label" and n.parent is not None and n.parent.tag == "fn":  # a table's notes need their marks
+            in_table = n.parent.parent is not None and n.parent.parent.tag == "table-wrap-foot"
+            return self.run(n).strip() + " " if in_table else ""
         if n.tag == "label" and n.parent is not None and n.parent.tag == "list-item":
             return self.run(n).strip() + " "
         if n.tag == "title" and n.parent is not None and n.parent.tag == "caption":
@@ -1211,12 +1232,13 @@ def jats_doc(meta, d):
     path = d / "jats.xml"
     if not path.exists():
         raise ReaderError("no JATS XML; run fetch --route jats first")
-    root = et_to_node(ET.parse(str(path)).getroot())
+    root = et_to_node(parse_xml(path))
     doc = Doc(dict(meta))
     doc._jats_fns = {n.attrs.get("id"): n for n in root.findall(lambda x: x.tag == "fn") if n.attrs.get("id")}
     doc._jats_refs = {n.attrs.get("id") for n in root.findall(lambda x: x.tag == "ref")}
     ix = JatsInline(doc)
     imgdir = d / "img"
+    doc._imgdir = imgdir
     doc.pdf = source_pdf(meta)
     doc.meta["kicker"] = meta.get("venue") or "Article"
     doc.source = "Text from Europe PMC's full-text XML for this article; figures from Europe PMC's file bundle."
@@ -1225,7 +1247,9 @@ def jats_doc(meta, d):
         t = art_meta.find(lambda x: x.tag == "article-title")
         if t is not None:
             doc.meta["title_html"] = ix.run(t).strip()
-        for ab in art_meta.findall(lambda x: x.tag == "abstract"):
+        all_abstracts = art_meta.findall(lambda x: x.tag == "abstract")
+        full = [a for a in all_abstracts if a.attrs.get("abstract-type") not in ("toc", "teaser", "precis", "web-summary", "graphical")]
+        for ab in full or all_abstracts:
             title = ab.find(lambda x: x.tag == "title" and x.parent is ab)
             head = title.text().strip() if title is not None else "Abstract"
             paras = [ix.run(p).strip() for p in ab.findall(lambda x: x.tag == "p")]
@@ -1286,20 +1310,26 @@ def jats_doc(meta, d):
                     u = data_uri(f.read_bytes())
                     if u:
                         imgs.append((u, "%s, shown as an image" % (label.text().strip().rstrip(".:") if label is not None else ("Table" if t == "table-wrap" else "Figure"))))
+            if len(imgs) > 1:  # publishers often add a small preview of the same figure
+                biggest = max(len(u) for u, _ in imgs)
+                imgs = [x for x in imgs if len(x[0]) >= biggest * 0.2]
             table = ""
             tb = k.find(lambda x: x.tag == "table")
             if tb is not None:
                 table = ix.one(tb)
             caption = ix.run(cap).strip() if cap is not None else ""
             foot = k.find(lambda x: x.tag == "table-wrap-foot")
-            if foot is not None and ix.run(foot).strip():
-                caption += ' <small class="tnote">%s</small>' % ix.run(foot).strip()
+            foot_text = " ".join(x for x in (ix.run(c).strip() for c in foot.children()) if x) if foot is not None else ""
+            if foot_text:
+                caption += ' <small class="tnote">%s</small>' % foot_text
             doc.add(t="fig", kind="table" if t == "table-wrap" else "figure",
                     id="j-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None,
                     label=label.text().strip() if label is not None else "",
                     caption=caption, imgs=imgs, table=table)
         elif t == "disp-formula":
-            doc.add(t="eq", html=formula_html(k) or ix.run(k))
+            lab = k.find(lambda x: x.tag == "label" and x.parent is k)
+            html_ = formula_html(k, doc)
+            doc.add(t="eq", html=html_ + ("&emsp;" + esc(lab.text().strip()) if lab is not None else "") if html_ else ix.run(k))
         elif t == "list":
             items = [ix.run(li).strip() for li in k.children() if li.tag == "list-item"]
             labelled = any(c.tag == "label" for li in k.children() if li.tag == "list-item" for c in li.children())
@@ -1382,21 +1412,15 @@ def crop_png(pdf, page, bbox, page_h, dpi=170):
     w, h = int((r - l + 2 * pad) * scale), int((t - b + 2 * pad) * scale)
     if w < 10 or h < 10:
         return None
-    tmp = WORK / "tmp"
-    tmp.mkdir(parents=True, exist_ok=True)
-    root = tmp / "crop"
-    png = tmp / "crop.png"
-    if png.exists():
-        png.unlink()
-    # pdftoppm 26 writes nothing when the output root is "-", so go through a file
-    r_ = subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-r", str(dpi), "-x", str(x), "-y", str(y),
-                         "-W", str(w), "-H", str(h), "-png", "-singlefile", "--", str(pdf), str(root)],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
-    if r_.returncode != 0 or not png.exists():
-        return None
-    data = png.read_bytes()
-    png.unlink()
-    return data
+    WORK.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=str(WORK)) as tmp:  # its own folder, so simultaneous builds can't mix up crops
+        root = Path(tmp) / "crop"
+        png = Path(tmp) / "crop.png"
+        # pdftoppm 26 writes nothing when the output root is "-", so go through a file
+        r_ = subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-r", str(dpi), "-x", str(x), "-y", str(y),
+                             "-W", str(w), "-H", str(h), "-png", "-singlefile", "--", str(pdf), str(root)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        return png.read_bytes() if r_.returncode == 0 and png.exists() else None
 
 
 WATERMARK = re.compile(r"^(Downloaded from |Downloaded by |This article is protected by copyright|Copyright ©)", re.I)
@@ -1464,18 +1488,17 @@ def docling_doc(meta, d, pages=None):
             continue
         pg = pic["prov"][0]["page_no"]
         l, t, r, b = area(pic)
+        cap = resolve(pic["captions"][0])[1]
+        cl, cr = (area(cap)[0], area(cap)[2]) if cap.get("prov") else (l, r)
         for other in pictures:
             if other is pic or other.get("captions") or other["prov"][0]["page_no"] != pg:
                 continue
             ol, ot, orr, ob = area(other)
-            if ob <= t + 30 and ot >= b - 30:
+            if ob <= t + 30 and ot >= b - 30 and cl <= (ol + orr) / 2 <= cr:  # under this caption, not in the next column
                 l, t, r, b = min(l, ol), max(t, ot), max(r, orr), min(b, ob)
                 absorbed.add(other.get("self_ref"))
-        cap = resolve(pic["captions"][0])[1]
-        if cap.get("prov"):
-            cl, _, cr, _ = area(cap)
-            if cr - cl > 1.25 * (r - l):  # the caption spans the whole figure; the picture found is only part of it
-                l, r = min(l, cl), max(r, cr)
+        if cr - cl > 1.25 * (r - l):  # the caption spans the whole figure; the picture found is only part of it
+            l, r = min(l, cl), max(r, cr)
         float_box[pic.get("self_ref")] = (l, t, r, b)
         figure_areas.setdefault(pg, []).append((l, t + 12, r, b))
     head_counts = Counter((t.get("text") or "").strip() for t in j.get("texts", []) if t.get("label") == "section_header")
@@ -1488,7 +1511,7 @@ def docling_doc(meta, d, pages=None):
         il, it, ir, ib = area(item)
         cx, cy = (il + ir) / 2, (it + ib) / 2
         for l, t, r, b in figure_areas.get(pg, []):
-            if l <= cx <= r and (b <= cy <= t or (head_counts[text] >= 2 and 0 <= ib - t <= 55)):
+            if l <= cx <= r and (b <= cy <= t or (head_counts[text] >= 2 and re.search(r"[^\W\d_]\d\b", text) and 0 <= ib - t <= 55)):
                 return True
         return False
 
@@ -1769,44 +1792,37 @@ REFS_HEAD = re.compile(r"^\s*(references(\s+and\s+notes)?|bibliography|works cit
 
 
 NOTES_HEAD = re.compile(r"^\s*(end)?notes\s*$", re.I)
-NOT_A_NOTE = {"in", "of", "to", "the", "and", "or", "at", "by", "for", "from", "with", "than", "about", "over", "under", "around", "only",
-              "table", "tables", "figure", "figures", "fig", "section", "page", "pages", "chapter", "study", "studies", "model", "models",
-              "wave", "group", "groups", "hypothesis", "step", "part", "experiment", "round", "day", "week", "year", "appendix", "h"}
 
 
 def link_endnotes(doc):
-    """Numbered endnotes whose markers lost their superscript: "four expectations 1 regarding".
-    Markers must appear in order, 1, 2, 3 ..., which keeps ordinary numbers from matching."""
+    """Numbered endnotes whose markers lost their superscript. A marker is only
+    recognised straight after punctuation ("in Korsholm. 2 The"), in order. One
+    that can't be told from an ordinary number stays as plain text."""
     start = next((i for i, b in enumerate(doc.blocks) if b["t"] == "h" and NOTES_HEAD.match(strip_tags(b["html"]))), None)
     if start is None:
         return
-    notes = {}
+    notes, count = {}, 0
     for b in doc.blocks[start + 1:]:
         if b["t"] == "h":
             break
-        for k, h in enumerate(b["items"] if b["t"] == "list" else [b.get("html", "")] if b["t"] == "p" else [], 1):
+        for h in (b["items"] if b["t"] == "list" else [b.get("html", "")] if b["t"] == "p" else []):
+            count += 1
             m = re.match(r"^(?:<small>)?\s*(\d{1,3})[.)]?\s+(.*?)(?:</small>)?$", h, re.S)
             if m:
                 notes[int(m.group(1))] = m.group(2)
             elif b["t"] == "list":  # Docling keeps a list's numbers apart from its text
-                notes[k] = h
-    n, i, pos = 1, 0, 0
-    while n in notes and i < start:
-        b = doc.blocks[i]
-        hit = None
-        if b["t"] == "p":
-            for m in re.finditer(r"(?<=[^\W\d_][,.;:?!”’\")]|[^\W\d_]{2}) (%d)(?=[ .,;:)]|$)" % n, b["html"][pos:]):
-                word = re.search(r"([^\W\d_]+)[,.;:?!”’\")]*$", b["html"][:pos + m.start()])
-                if word and word.group(1).lower() not in NOT_A_NOTE:
-                    hit = m
-                    break
-        if hit is None:
-            i, pos = i + 1, 0
-            continue
-        note = doc.note(notes[n])
-        b["html"] = b["html"][:pos + hit.start()] + note + b["html"][pos + hit.end():]
-        pos += hit.start() + len(note)
-        n += 1
+                notes[count] = h
+    at, pos = 0, 0
+    for n in sorted(notes):
+        pat = re.compile(r"(?<=[^\W\d_][.,;:?!”’\")]) (%d)(?=\s|$)" % n)
+        for i in range(at, start):
+            b = doc.blocks[i]
+            m = pat.search(b["html"], pos if i == at else 0) if b["t"] == "p" else None
+            if m:
+                note = doc.note(notes[n])
+                b["html"] = b["html"][:m.start()] + note + b["html"][m.end():]
+                at, pos = i, m.start() + len(note)
+                break
 
 
 def link_references(doc, raw):
@@ -2239,7 +2255,7 @@ def jats_text(xml, out):
             for c in e:
                 outermost(c)
     in_back = [False]
-    outermost(ET.parse(str(xml)).getroot())
+    outermost(parse_xml(xml))
     out.write_text(" ".join(parts), encoding="utf-8")
     return out
 

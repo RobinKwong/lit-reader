@@ -102,7 +102,10 @@
   document.addEventListener("click", function (e) {
     var m = e.target.closest(".sn-mark"); if (!m) return;
     var n = document.getElementById(m.getAttribute("data-for"));
-    if (n && getComputedStyle(n).float === "none") m.setAttribute("aria-expanded", String(n.classList.toggle("open")));
+    if (!n) return;
+    if (getComputedStyle(n).float === "none") { m.setAttribute("aria-expanded", String(n.classList.toggle("open"))); return; }
+    n.classList.add("flash");  // already in the margin: show which note this mark belongs to
+    setTimeout(function () { n.classList.remove("flash"); }, 1600);
   });
   document.querySelectorAll(".sn-mark").forEach(function (m) {
     var n = document.getElementById(m.getAttribute("data-for"));
@@ -208,7 +211,9 @@
     var h = document.getElementById(id); if (!h) return "";
     return h.getAttribute("data-title") || h.textContent;
   }
-  var lastSaved = 0, ticking = false, latest = null, saveTimer = null;
+  var lastSaved = 0, ticking = false, latest = null, saveTimer = null, resumed = false;
+  var listed = {}, lastListed = "";  // a section too minor for the contents highlights its parent
+  heads.forEach(function (h) { if (tocLinks[h.id]) lastListed = h.id; listed[h.id] = lastListed; });
   function update() {
     ticking = false;
     if (!geo.length) return;
@@ -227,17 +232,19 @@
       var t = sectionTitle(cur.sec);
       where.textContent = !secLeft ? t  // the reference list has no reading time
         : window.innerWidth < 560 ? sm + " min left" + (t ? " · " + t : "")
-        : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body ? " · " + bm + " min to the end of the main text" : "");
+        : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body && bm ? " · " + bm + " min to the end of the main text" : "");
     }
     if (bar && bodyTotal) bar.style.width = (100 * (1 - bodyLeft / bodyTotal)) + "%";
-    Object.keys(tocLinks).forEach(function (k) { tocLinks[k].classList.toggle("current", !atStart && k === cur.sec); });
+    Object.keys(tocLinks).forEach(function (k) { var on = !atStart && k === (listed[cur.sec] || cur.sec);
+      tocLinks[k].classList.toggle("current", on);
+      if (on) tocLinks[k].setAttribute("aria-current", "location"); else tocLinks[k].removeAttribute("aria-current"); });
     latest = { id: cur.el.id, started: bodyTotal && bodyLeft / bodyTotal < 0.97 };
     clearTimeout(saveTimer);
     if (Date.now() - lastSaved > 1500) savePosition();
     else saveTimer = setTimeout(savePosition, 1500);  // so the place where scrolling stops is the one kept
   }
   function savePosition() {
-    if (!latest) return;
+    if (!latest || !resumed) return;  // nothing is saved until the saved place has been restored
     lastSaved = Date.now();
     var st = load("litreader.status." + pid, {});
     st.pos = latest.id; st.at = new Date().toISOString();
@@ -288,10 +295,11 @@
       if (el) {
         window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - Math.max(90, window.innerHeight * 0.3) + 1);  // back on the line position is read from
         el.classList.add("flash-block");
-        var t = toast("Resumed where you left off. <button type='button'>Back to the start</button>", 12000);
+        var t = toast("Resumed where you left off. <button type='button'>Back to the start</button>", 8000);
         t.querySelector("button").addEventListener("click", function () { window.scrollTo(0, 0); t.remove(); });
       }
     }
+    resumed = true;
     update();
   }
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(start); else window.addEventListener("load", start);
