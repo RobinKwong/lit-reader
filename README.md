@@ -97,6 +97,7 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **Headings:** the contents sidebar depends on headings that look different from the body text. A plainly typeset manuscript may come through as one long section.
 - **Scanned PDFs:** Docling recognises the text, but the coverage check can't run because the PDF has no text to compare against.
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
+- **Screens:** lit-reader is designed for reading on a laptop or desktop. Pages adapt to narrow screens, but they haven't been tested on a real phone, and each page needs the `assets` folder beside it.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
 
 ## Checking a reading copy
@@ -112,10 +113,19 @@ A missing run is a stretch of 25 or more source words that didn't reach the page
 
 Pages built from arXiv HTML or a PDF are compared with the PDF's text, which needs poppler. Pages built from Europe PMC are compared with the article's XML.
 
+## Privacy
+
+lit-reader uses no AI service, analytics or account. Conversion happens on your machine, reading copies load nothing from the internet, and your settings and reading position stay in your browser. It uses the network only in these cases:
+
+- **Fetching a paper:** an arXiv ID, DOI or PMCID is sent to arXiv, Crossref or Europe PMC, and the paper comes back.
+- **Looking up a local PDF:** an arXiv ID or DOI found on the first page is sent to arXiv or Crossref to find the title and authors. The PDF itself is never uploaded.
+- **Installing:** uv downloads lit-reader, and Docling downloads its models the first time it runs.
+- **Following a link:** links in a reading copy open in your browser like any other link.
+
 ## Copyright
 
 Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one.
 
 ## Licence
 
-lit-reader is released under the [MIT licence](LICENSE).
+lit-reader is released under the [MIT licence](LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](src/lit_reader/fonts/OFL.txt).

@@ -70,6 +70,8 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import __version__
+
 HERE = Path(__file__).resolve().parent
 HOME = Path.home()
 LIT_CACHE = Path(os.environ.get("LIT_CACHE", "~/.cache/lit")).expanduser()
@@ -77,14 +79,14 @@ CONFIG = Path(os.environ.get("LIT_READER_CONFIG") or
               Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "lit-reader" / "config.toml").expanduser()
 WORK = HOME / ".cache" / "lit-reader"
 SRC = WORK / "src"
-FONTS = WORK / "fonts"
+FONTS = HERE / "fonts"
 OUT = None              # the settings below fill these in for the ledger commands
 LIST_FILE = None
 PROJECT_READING = None
 LEDGERS = {}
 INDEX_TEXT = {"index_bar": "Reading copies", "index_kicker": "Papers", "index_note": ""}
 WPM = 200  # must match reader.js
-UA = "lit-reader/0.1 (personal offline reading tool)"
+UA = "lit-reader/%s (offline reading tool)" % __version__
 
 
 class ReaderError(Exception):
@@ -388,6 +390,34 @@ def authors_html(authors):
         esc(", ".join(authors[:AUTHORS_SHOWN])), esc(", ".join(authors[AUTHORS_SHOWN:])), rest, rest)
 
 
+def image_size(src):
+    """(width, height) of an embedded image, so the page doesn't shift as images load."""
+    try:
+        d = base64.b64decode(src.split(",", 1)[1])
+    except (IndexError, ValueError):
+        return None
+    if d[:8] == b"\x89PNG\r\n\x1a\n" and len(d) >= 24:
+        return int.from_bytes(d[16:20], "big"), int.from_bytes(d[20:24], "big")
+    if d[:3] == b"GIF" and len(d) >= 10:
+        return int.from_bytes(d[6:8], "little"), int.from_bytes(d[8:10], "little")
+    i = 2
+    while d[:2] == b"\xff\xd8" and i + 9 < len(d):
+        if d[i] != 0xFF:
+            return None
+        m = d[i + 1]
+        if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+            return int.from_bytes(d[i + 7:i + 9], "big"), int.from_bytes(d[i + 5:i + 7], "big")
+        i += 2 + int.from_bytes(d[i + 2:i + 4], "big")
+    return None
+
+
+def img_tag(src, alt):
+    alt = "" if (alt or "").strip().lower() == "refer to caption" else (alt or "")  # arXiv's placeholder; the caption follows
+    size = image_size(src)
+    dims = ' width="%d" height="%d"' % size if size else ""
+    return '<img src="%s" alt="%s"%s loading="lazy">' % (src, attr(alt), dims)
+
+
 def pdf_href(doc):
     """Standalone pages link to their own copy of the PDF, so no local path is written into the page."""
     return doc.meta.get("pdf_href") or doc.pdf.as_uri()
@@ -458,7 +488,7 @@ def render(doc, list_line=None, list_pos=None):
         elif t == "fig":
             parts = []
             for src, alt in b.get("imgs") or []:
-                parts.append('<img src="%s" alt="%s" loading="lazy">' % (src, attr(alt or "")))
+                parts.append(img_tag(src, alt))
             if b.get("table"):
                 parts.append('<div class="tablewrap">%s</div>' % b["table"])
             if not parts:
@@ -486,7 +516,7 @@ def render(doc, list_line=None, list_pos=None):
     abstracts = "".join('<section class="abstract"><h2>%s</h2>%s</section>' % (esc(h), chunk_ps(a)) for h, a in doc.abstracts)
     total_words = sum(words(strip_tags(block_text(b))) for b in doc.blocks if b["t"] != "h")
     authors = m.get("authors") or []
-    meta_bits = [x for x in [m.get("venue"), str(m.get("year") or "")] if x]
+    meta_bits = [x for x in [esc(m.get("venue") or ""), str(m.get("year") or "")] if x]
     doi = m.get("doi")
     if doi:
         meta_bits.append('<a href="https://doi.org/%s" rel="noopener">doi:%s</a>' % (attr(doi), esc(doi)))
@@ -498,10 +528,12 @@ def render(doc, list_line=None, list_pos=None):
         why = '<div class="why"><b>%s</b> %s</div>' % (esc(list_pos or "On your list"), list_line)
 
     alone = bool(m.get("standalone"))
-    back = "" if alone else '<ol class="back"><li><a href="index.html">← All papers</a></li></ol>'
+    back = '<ol class="back"><li><a href="#top">↑ Back to the start</a></li>%s</ol>' % (
+        "" if alone else '<li><a href="index.html">← All papers</a></li>')
     toc_html = '<div class="toc-head">Contents</div><ol>%s</ol>%s' % ("".join(
         '<li class="l%d"><a href="#%s"><span>%s</span><span class="mins">%s</span></a></li>' % (
-            l, h, esc(t), ("%d′" % mins) if mins else "") for l, h, t, mins in toc), back)
+            l, h, esc(t), ('<span aria-hidden="true">%d′</span><span class="sr">%d min</span>' % (mins, mins)) if mins else "")
+        for l, h, t, mins in toc), back)
 
     title_text = strip_tags(m.get("title_html") or esc(m.get("title", ""))).strip()
     page = PAGE.format(
@@ -595,24 +627,24 @@ def main_words(doc):
     return n
 
 
-PANEL = """<div class="panel" id="panel" hidden>
-  <div class="row"><span>Theme</span><span class="seg">
+PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settings" hidden>
+  <div class="row" role="group" aria-label="Theme"><span>Theme</span><span class="seg">
     <button data-pref="theme" data-val="auto">Auto</button><button data-pref="theme" data-val="light">Light</button>
     <button data-pref="theme" data-val="sepia">Sepia</button><button data-pref="theme" data-val="dark">Dark</button></span></div>
-  <div class="row"><span>Font</span><span class="seg">
+  <div class="row" role="group" aria-label="Font"><span>Font</span><span class="seg">
     <button data-pref="font" data-val="literata" style="font-family:Literata">Literata</button>
     <button data-pref="font" data-val="iowan" style="font-family:'Iowan Old Style'">Iowan</button>
     <button data-pref="font" data-val="charter" style="font-family:Charter">Charter</button>
     <button data-pref="font" data-val="sans">Sans</button></span></div>
-  <div class="row"><span>Size</span><span class="seg">
+  <div class="row" role="group" aria-label="Size"><span>Size</span><span class="seg">
     <button id="size-down" aria-label="smaller">A−</button><span id="size-now" style="padding:.2rem .3rem">20px</span>
     <button id="size-up" aria-label="larger">A+</button></span></div>
-  <div class="row"><span>Line length</span><span class="seg">
+  <div class="row" role="group" aria-label="Line length"><span>Line length</span><span class="seg">
     <button data-pref="width" data-val="narrow">Narrow</button><button data-pref="width" data-val="medium">Medium</button>
     <button data-pref="width" data-val="wide">Wide</button></span></div>
-  <div class="row"><span>Paragraphs</span><span class="seg">
+  <div class="row" role="group" aria-label="Paragraphs"><span>Paragraphs</span><span class="seg">
     <button data-pref="para" data-val="short">Shorter</button><button data-pref="para" data-val="orig">As published</button></span></div>
-  <div class="row"><span>Line spacing</span><span class="seg">
+  <div class="row" role="group" aria-label="Line spacing"><span>Line spacing</span><span class="seg">
     <button data-pref="lh" data-val="tight">1.4</button><button data-pref="lh" data-val="normal">1.5</button>
     <button data-pref="lh" data-val="loose">1.7</button></span></div>
   <div class="note">People read fastest in different fonts, and liking a font doesn't predict it (Wallace et al., 2022). It's worth trying each one for a page.</div>
@@ -633,18 +665,19 @@ PAGE = """<!doctype html>
 <link rel="stylesheet" href="assets/reader.css">
 </head>
 <body data-pid="{pid}">
+<a class="skip" href="#text-start">Skip to the text</a>
 <div class="bar">
-  <button id="toc-toggle" type="button">☰ Contents</button>
+  <button id="toc-toggle" type="button" aria-expanded="false" aria-controls="toc">☰ Contents</button>
   <span class="where" id="where"></span>
   {all_link}
-  <button id="aa" type="button" aria-label="Reading settings">Aa</button>
+  <button id="aa" type="button" aria-label="Reading settings" aria-expanded="false" aria-controls="panel">Aa</button>
 </div>
 <div class="progress" id="progress"></div>
 {panel}
 <div class="layout">
-<nav class="toc" aria-label="Contents">{toc}</nav>
-<main>
-<header class="paper">
+<nav class="toc" id="toc" aria-label="Contents">{toc}</nav>
+<main id="text-start" tabindex="-1">
+<header class="paper" id="top">
   <div class="kicker">{kicker}</div>
   <h1>{title_html}</h1>
   {part}
@@ -993,7 +1026,15 @@ def arxiv_doc(meta, d):
 
 
 def arxiv_figure(doc, ix, k, imgdir):
-    cap = k.find(lambda x: x.tag == "figcaption")
+    def owner(c):
+        p = c.parent
+        while p is not None and p.tag != "figure":
+            p = p.parent
+        return p
+    own = [c for c in k.findall(lambda x: x.tag == "figcaption") if owner(c) is k]
+    panels = [c for c in k.findall(lambda x: x.tag == "figcaption") if owner(c) is not k]
+    cap = own[-1] if own else (panels[0] if panels else None)  # with panels, the figure's own caption comes last
+    panels = [c for c in panels if c is not cap]
     label, caption, alts = "", "", []
     if cap is not None:
         for desc in cap.findall(lambda x: "ltx_acm_description" in x.cls()):
@@ -1002,7 +1043,7 @@ def arxiv_figure(doc, ix, k, imgdir):
         if tg is not None:
             label = tg.text().strip()
             tg.kids = []
-        caption = ix.run(cap).strip()
+        caption = " ".join(x for x in [ix.run(cap).strip()] + [ix.run(c).strip() for c in panels] if x)
     imgs = []
     for img in k.findall(lambda x: x.tag == "img"):
         f = imgdir / safe_id(img.attrs.get("src", ""))
@@ -1115,6 +1156,13 @@ class JatsInline(Inline):
         return None
 
 
+def structured_ref(ix, cit):
+    """An element-citation has fields but no punctuation between them."""
+    names = [ix.one(n).strip() for n in cit.findall(lambda x: x.tag in ("name", "string-name", "collab"))]
+    fields = [ix.run(c).strip() for c in cit.children() if c.tag not in ("person-group", "name", "string-name", "collab")]
+    return ". ".join(x for x in [", ".join(names)] + fields if x) + "."
+
+
 def jats_doc(meta, d):
     path = d / "jats.xml"
     if not path.exists():
@@ -1178,8 +1226,9 @@ def jats_doc(meta, d):
             imgs = []
             for g in k.findall(lambda x: x.tag == "graphic"):
                 href = g.attrs.get("href", "")
-                f = imgdir / (os.path.basename(href) + ".jpg") if href and not os.path.splitext(href)[1] else imgdir / os.path.basename(href)
-                if f.exists():
+                base = os.path.basename(href)
+                f = next((imgdir / (base + e) for e in ("", ".jpg", ".jpeg", ".png", ".gif") if base and (imgdir / (base + e)).is_file()), None)
+                if f is not None:
                     u = data_uri(f.read_bytes())
                     if u:
                         imgs.append((u, ""))
@@ -1187,10 +1236,14 @@ def jats_doc(meta, d):
             tb = k.find(lambda x: x.tag == "table")
             if tb is not None:
                 table = ix.one(tb)
+            caption = ix.run(cap).strip() if cap is not None else ""
+            foot = k.find(lambda x: x.tag == "table-wrap-foot")
+            if foot is not None and ix.run(foot).strip():
+                caption += ' <small class="tnote">%s</small>' % ix.run(foot).strip()
             doc.add(t="fig", kind="table" if t == "table-wrap" else "figure",
                     id="j-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None,
                     label=label.text().strip() if label is not None else "",
-                    caption=ix.run(cap).strip() if cap is not None else "", imgs=imgs, table=table)
+                    caption=caption, imgs=imgs, table=table)
         elif t == "disp-formula":
             m = k.find(lambda x: x.tag == "math")
             doc.add(t="eq", html=math_html(m) if m is not None else ix.run(k))
@@ -1213,7 +1266,7 @@ def jats_doc(meta, d):
     for ref in root.findall(lambda x: x.tag == "ref"):  # usually in <back>, but some articles keep them in the body
         cit = ref.find(lambda x: x.tag in ("mixed-citation", "element-citation", "citation"))
         if cit is not None:
-            doc.refs.append((ref.attrs.get("id", ""), ix.run(cit).strip()))
+            doc.refs.append((ref.attrs.get("id", ""), structured_ref(ix, cit) if cit.tag == "element-citation" else ix.run(cit).strip()))
     fns = [f for f in root.findall(lambda x: x.tag == "fn" and x.parent is not None and x.parent.tag == "fn-group")]
     notes = root.findall(lambda x: x.tag == "author-notes")
     extra = [ix.run(f).strip() for f in fns] + [ix.run(fn).strip() for an in notes for fn in an.findall(lambda x: x.tag == "fn")]
@@ -1289,12 +1342,29 @@ WATERMARK = re.compile(r"^(Downloaded from |Downloaded by |This article is prote
 DICT = None
 
 
-def dehyphen(a, b):
-    """Join 'perspec-' + 'tives' when the result is a word."""
+def word_list():
     global DICT
     if DICT is None:
         p = Path("/usr/share/dict/words")
         DICT = set(w.strip().lower() for w in p.read_text(errors="ignore").splitlines()) if p.exists() else set()
+    return DICT
+
+
+def join_drop_cap(text):
+    """'H uman' is a drop cap read as its own word; 'T cells' is not."""
+    m = re.match(r"^([B-HJ-Z]) ([a-z]+)", text)
+    if m:
+        w = (m.group(1) + m.group(2)).lower()
+        stems = [w, w[:-1] if w.endswith("s") else w, w[:-2] if w.endswith("ed") else w, w[:-1] if w.endswith("ed") else w,
+                 w[:-3] if w.endswith("ing") else w, w[:-3] + "e" if w.endswith("ing") else w]
+        if any(x in word_list() for x in stems):
+            return m.group(1) + text[2:]
+    return text
+
+
+def dehyphen(a, b):
+    """Join 'perspec-' + 'tives' when the result is a word."""
+    word_list()
     m1, m2 = re.search(r"(\w+)-$", a), re.match(r"([a-z]+)", b)
     if m1 and m2:
         joined = (m1.group(1) + m2.group(1)).lower()
@@ -1359,6 +1429,7 @@ def docling_doc(meta, d, pages=None):
     last_page = None
     pending = None  # paragraph text waiting for its continuation
     list_items = None
+    list_depth = 0  # a list inside a list joins the outer one
     caption_ids = set()
     for kind, item in order:
         if kind in ("pictures", "tables"):
@@ -1389,14 +1460,18 @@ def docling_doc(meta, d, pages=None):
     for kind, item in order:
         if kind == "group-start":
             if item.get("label") in ("list", "ordered_list"):
-                flush()
-                list_items = []
+                if list_depth == 0:
+                    flush()
+                    list_items = []
+                list_depth += 1
             continue
         if kind == "group-end":
-            if list_items is not None and item.get("label") in ("list", "ordered_list"):
-                if list_items:
-                    doc.add(t="list", ordered=item.get("label") == "ordered_list", items=list_items)
-                list_items = None
+            if list_depth and item.get("label") in ("list", "ordered_list"):
+                list_depth -= 1
+                if list_depth == 0:
+                    if list_items:
+                        doc.add(t="list", ordered=item.get("label") == "ordered_list", items=list_items)
+                    list_items = None
             continue
         if item.get("self_ref") in caption_ids:
             continue
@@ -1526,7 +1601,7 @@ def docling_doc(meta, d, pages=None):
             continue
         flush()
         page_marker(p)
-        pending = re.sub(r"^([B-HJ-Z]) ([a-z])", r"\1\2", text)  # a drop cap read as its own word: "H uman"
+        pending = join_drop_cap(text)
     flush()
     link_references(doc, refs_raw)
     if front_dropped:
@@ -1597,7 +1672,7 @@ def link_references(doc, raw):
         refs, cur = [], None
         for r in raw:
             # "Abbott, A. (1988)", "Ackerman B and Fishkin JS (2002)", "van der Meer TWG (2017)", "Yle News (2019)"
-            starts = re.match(r"^(?:(?:van|von|de|der|den|du|la|le)\s+)*[A-ZÀ-Þ][\w'’-]*(?:,| [A-ZÀ-Þ]{1,4}\b| \(| and | [A-ZÀ-Þ][a-zà-ÿ]+ \()", r) \
+            starts = re.match(r"^(?:(?:[Vv]an|[Vv]on|[Dd]e|[Dd]er|[Dd]en|[Dd]u|[Ll]a|[Ll]e)\s+)*[A-ZÀ-Þ][\w'’-]*(?:,| [A-ZÀ-Þ]{1,4}\b| \(| and | [A-ZÀ-Þ][a-zà-ÿ]+ \()", r) \
                 and re.search(r"\b(1[89]\d\d|20\d\d)[a-z]?\b", r[:200])
             if starts or cur is None:
                 cur = [r]
@@ -1609,7 +1684,7 @@ def link_references(doc, raw):
             t = " ".join(parts)
             rid = "r%d" % (i + 1)
             doc.refs.append((rid, esc(t)))
-            sur = re.match(r"^(?:(?:van|von|de|der|den|du|la|le)\s+)*([A-ZÀ-Þ][\w'’-]+)", t)
+            sur = re.match(r"^(?:(?:[Vv]an|[Vv]on|[Dd]e|[Dd]er|[Dd]en|[Dd]u|[Ll]a|[Ll]e)\s+)*([A-ZÀ-Þ][\w'’-]+)", t)
             yr = re.search(r"(1[89]\d\d|20\d\d)([a-z]?)", t)
             if sur and yr:
                 keys.setdefault((sur.group(1).lower(), yr.group(1) + yr.group(2)), rid)
@@ -1772,8 +1847,8 @@ def cmd_index(a):
             name = slug(meta) + ".html" if meta.get("authors") is not None else ""
             exists = name and (OUT / name).exists()
             who = meta["authors"][0].split()[-1] + (" et al." if len(meta["authors"]) > 2 else (" and " + meta["authors"][1].split()[-1] if len(meta["authors"]) == 2 else "")) if meta["authors"] else ""
-            desc = " · ".join(x for x in [who, str(meta.get("year") or ""), meta.get("venue") or "",
-                                          (it.get("part") or "").split(":")[0]] if x)
+            desc = " · ".join(esc(x) for x in [who, str(meta.get("year") or ""), meta.get("venue") or "",
+                                               (it.get("part") or "").split(":")[0]] if x)
             if exists:
                 mins = ""
                 html_ = (OUT / name).read_text(encoding="utf-8")
@@ -1807,7 +1882,7 @@ INDEX = """<!doctype html>
 <link rel="stylesheet" href="assets/reader.css">
 </head>
 <body class="index">
-<div class="bar"><span class="where">{bar}</span><button id="aa" type="button" aria-label="Reading settings">Aa</button></div>
+<div class="bar"><span class="where">{bar}</span><button id="aa" type="button" aria-label="Reading settings" aria-expanded="false" aria-controls="panel">Aa</button></div>
 {panel}
 <div class="layout"><main>
 <header class="paper"><div class="kicker">{kicker}</div><h1>Reading list</h1>
@@ -2105,8 +2180,9 @@ def cmd_standalone(a):
     name = re.sub(r"-+", "-", slug(meta)).strip("-") or "paper"
     out = Path(a.output).expanduser() if a.output else Path.cwd() / name
     target = out / "index.html"
-    if target.exists() and 'content="lit-reader"' not in target.read_text(encoding="utf-8", errors="replace")[:600]:
-        raise ReaderError("%s exists and wasn't made by lit-reader; choose another folder with -o" % target)
+    ours = target.is_file() and 'content="lit-reader"' in target.read_text(encoding="utf-8", errors="replace")[:600]
+    if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not ours)):
+        raise ReaderError("%s already holds other files; choose an empty folder with -o" % out)
     route, doc = take_route(a.route, meta, d, pdf, a.pages)
     page, total = render(doc)
     out.mkdir(parents=True, exist_ok=True)
@@ -2124,6 +2200,7 @@ LEDGER_COMMANDS = ("fetch", "pdf-convert", "build", "index", "all")
 def standalone_parser():
     ap = argparse.ArgumentParser(prog="lit-reader", description="Turn one academic paper into an offline HTML reading copy.",
                                  epilog="Ledger commands: %s (each has its own --help)." % ", ".join(LEDGER_COMMANDS))
+    ap.add_argument("--version", action="version", version="lit-reader " + __version__)
     ap.add_argument("input", help="a PDF path, arXiv ID or URL, DOI, or PMCID")
     ap.add_argument("-o", "--output", help="output folder (default: ./<slug>/)")
     ap.add_argument("--route", choices=["auto", "online", "arxiv", "jats", "pdf"], default="auto",

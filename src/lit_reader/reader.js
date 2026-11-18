@@ -42,9 +42,15 @@
 
   var panel = document.getElementById("panel");
   var aa = document.getElementById("aa");
+  function setPanel(open, refocus) {
+    panel.hidden = !open;
+    aa.setAttribute("aria-expanded", String(open));
+    if (!open && refocus) aa.focus();
+  }
   if (aa && panel) {
-    aa.addEventListener("click", function (e) { e.stopPropagation(); panel.hidden = !panel.hidden; });
-    document.addEventListener("click", function (e) { if (!panel.hidden && !panel.contains(e.target)) panel.hidden = true; });
+    aa.addEventListener("click", function (e) { e.stopPropagation(); setPanel(panel.hidden); });
+    document.addEventListener("click", function (e) { if (!panel.hidden && !panel.contains(e.target)) setPanel(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !panel.hidden) setPanel(false, true); });
     panel.addEventListener("click", function (e) {
       var b = e.target.closest("button"); if (!b) return;
       if (b.hasAttribute("data-pref")) prefs[b.getAttribute("data-pref")] = b.getAttribute("data-val");
@@ -72,27 +78,51 @@
   /* ---------- contents drawer on narrow screens ---------- */
   var toc = document.querySelector("nav.toc");
   var tocToggle = document.getElementById("toc-toggle");
+  function setToc(open, refocus) {
+    toc.classList.toggle("open", open);
+    tocToggle.setAttribute("aria-expanded", String(open));
+    if (open) { var first = toc.querySelector("a"); if (first) setTimeout(function () { first.focus(); }, 30); }
+    if (!open && refocus) tocToggle.focus();
+  }
   if (tocToggle && toc) {
-    tocToggle.addEventListener("click", function (e) { e.stopPropagation(); toc.classList.toggle("open"); });
-    toc.addEventListener("click", function (e) { if (e.target.closest("a")) toc.classList.remove("open"); });
+    tocToggle.addEventListener("click", function (e) { e.stopPropagation(); setToc(!toc.classList.contains("open")); });
+    toc.addEventListener("click", function (e) { if (e.target.closest("a")) setToc(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && toc.classList.contains("open")) setToc(false, true); });
   }
 
   /* ---------- sidenotes on narrow screens ---------- */
   document.addEventListener("click", function (e) {
     var m = e.target.closest(".sn-mark"); if (!m) return;
     var n = document.getElementById(m.getAttribute("data-for"));
-    if (n && getComputedStyle(n).float === "none") n.classList.toggle("open");
+    if (n && getComputedStyle(n).float === "none") m.setAttribute("aria-expanded", String(n.classList.toggle("open")));
+  });
+  document.addEventListener("keydown", function (e) {
+    var m = e.target.closest && e.target.closest(".sn-mark");
+    if (m && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); m.click(); }
+    if (m && e.key === "Escape") {
+      var n = document.getElementById(m.getAttribute("data-for"));
+      if (n && n.classList.contains("open")) { n.classList.remove("open"); m.setAttribute("aria-expanded", "false"); }
+    }
   });
 
   /* ---------- citation cards ---------- */
-  var card = null;
-  function closeCard() { if (card) { card.remove(); card = null; } }
-  function openCard(a) {
+  var card = null, cardFrom = null;
+  function closeCard(refocus) {
+    if (!card) return;
+    card.remove(); card = null;
+    if (refocus && cardFrom) cardFrom.focus();
+  }
+  document.querySelectorAll("a.cite").forEach(function (a) { a.setAttribute("aria-haspopup", "dialog"); });
+  function openCard(a, moveFocus) {
     closeCard();
+    cardFrom = a;
     var ids = (a.getAttribute("data-ref") || "").split(" ").filter(Boolean);
     if (!ids.length) return;
     card = document.createElement("div");
     card.className = "cite-card";
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", "Reference");
+    card.tabIndex = -1;
     ids.forEach(function (id, i) {
       var li = document.getElementById("ref-" + id);
       if (!li) return;
@@ -104,6 +134,7 @@
       go.addEventListener("click", function () {
         closeCard(); li.classList.add("flash"); setTimeout(function () { li.classList.remove("flash"); }, 1600);
         var det = li.closest("details"); if (det) det.open = true;
+        li.tabIndex = -1; setTimeout(function () { li.focus(); }, 30);
       });
       d.appendChild(go);
       card.appendChild(d);
@@ -114,6 +145,12 @@
     var top = window.scrollY + r.bottom + 6;
     var left = Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - card.offsetWidth - 12);
     card.style.top = top + "px"; card.style.left = Math.max(8, left) + "px";
+    card.addEventListener("keydown", function (e) {
+      if (e.key !== "Tab") return;
+      var links = card.querySelectorAll("a"), last = links[links.length - 1];
+      if ((!e.shiftKey && document.activeElement === last) || (e.shiftKey && document.activeElement === card)) { e.preventDefault(); closeCard(true); }
+    });
+    if (moveFocus) card.focus();
   }
   var hoverTimer = null;
   document.addEventListener("mouseover", function (e) {
@@ -126,10 +163,10 @@
   });
   document.addEventListener("click", function (e) {
     var a = e.target.closest("a.cite");
-    if (a) { e.preventDefault(); openCard(a); return; }
+    if (a) { e.preventDefault(); openCard(a, e.detail === 0); return; }  // detail 0: opened from the keyboard
     if (card && !card.contains(e.target)) closeCard();
   });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeCard(); if (panel) panel.hidden = true; } });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeCard(true); });
 
   /* ---------- figures: click to widen ---------- */
   document.addEventListener("click", function (e) {
@@ -156,7 +193,7 @@
     var h = document.getElementById(id); if (!h) return "";
     return h.getAttribute("data-title") || h.textContent;
   }
-  var lastSaved = 0, ticking = false;
+  var lastSaved = 0, ticking = false, latest = null, saveTimer = null;
   function update() {
     ticking = false;
     if (!geo.length) return;
@@ -171,26 +208,37 @@
     var sm = Math.max(1, Math.round(secLeft / WPM)), bm = Math.round(bodyLeft / WPM);
     if (where) {
       var t = sectionTitle(cur.sec);
-      where.textContent = (t ? t + " · " : "") + "about " + sm + " min left in section" +
-        (cur.body ? " · " + bm + " min to the end of the main text" : "");
+      where.textContent = window.innerWidth < 560
+        ? sm + " min left" + (t ? " · " + t : "")
+        : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body ? " · " + bm + " min to the end of the main text" : "");
     }
     if (bar && bodyTotal) bar.style.width = (100 * (1 - bodyLeft / bodyTotal)) + "%";
     Object.keys(tocLinks).forEach(function (k) { tocLinks[k].classList.toggle("current", k === cur.sec); });
-    var now = Date.now();
-    if (now - lastSaved > 1500) {
-      lastSaved = now;
-      var st = load("litreader.status." + pid, {});
-      st.pos = cur.el.id; st.at = new Date().toISOString();
-      if (!st.state && bodyTotal && bodyLeft / bodyTotal < 0.97) st.state = "started";
-      save("litreader.status." + pid, st);
-    }
+    latest = { id: cur.el.id, started: bodyTotal && bodyLeft / bodyTotal < 0.97 };
+    clearTimeout(saveTimer);
+    if (Date.now() - lastSaved > 1500) savePosition();
+    else saveTimer = setTimeout(savePosition, 1500);  // so the place where scrolling stops is the one kept
   }
+  function savePosition() {
+    if (!latest) return;
+    lastSaved = Date.now();
+    var st = load("litreader.status." + pid, {});
+    st.pos = latest.id; st.at = new Date().toISOString();
+    if (!st.state && latest.started) st.state = "started";
+    save("litreader.status." + pid, st);
+  }
+  window.addEventListener("pagehide", savePosition);
   window.addEventListener("scroll", function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
   window.addEventListener("resize", function () { measure(); update(); });
 
+  var live = document.createElement("div");  // present before it speaks, so screen readers announce the change
+  live.className = "sr"; live.setAttribute("role", "status");
+  document.body.appendChild(live);
   function toast(html, ms) {
     var t = document.createElement("div"); t.className = "toast"; t.innerHTML = html;
-    document.body.appendChild(t); setTimeout(function () { t.remove(); }, ms || 5000); return t;
+    document.body.appendChild(t); setTimeout(function () { t.remove(); }, ms || 5000);
+    setTimeout(function () { live.textContent = t.firstChild.textContent; }, 100);
+    return t;
   }
 
   /* ---------- long author lists ---------- */
@@ -223,7 +271,7 @@
       if (el) {
         el.scrollIntoView({ block: "start" });
         el.classList.add("flash-block");
-        var t = toast("Resumed where you left off. <button type='button'>Back to the start</button>", 6000);
+        var t = toast("Resumed where you left off. <button type='button'>Back to the start</button>", 12000);
         t.querySelector("button").addEventListener("click", function () { window.scrollTo(0, 0); t.remove(); });
       }
     }
@@ -231,4 +279,11 @@
   }
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(start); else window.addEventListener("load", start);
   window.addEventListener("load", function () { measure(); update(); });
+  if (window.ResizeObserver) {  // images and fonts move the text after the first measurement
+    var layoutTimer = null;
+    new ResizeObserver(function () {
+      clearTimeout(layoutTimer);
+      layoutTimer = setTimeout(function () { measure(); update(); }, 120);
+    }).observe(document.querySelector("main"));
+  }
 })();
