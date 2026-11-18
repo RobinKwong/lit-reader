@@ -1136,7 +1136,10 @@ def arxiv_figure(doc, ix, k, imgdir):
                 p = p.parent
             return False
         body = [ix.run(p).strip() for p in k.findall(lambda x: x.tag == "p") if not spoken_only(p)]
-        table = '<pre class="listing">%s</pre>' % esc("\n".join(lines)) if lines else "".join("<p>%s</p>" % b for b in body if b)
+        if lines:
+            table = '<pre class="listing">%s</pre>' % esc("\n".join(lines))
+        elif not float_key(label):  # a lost figure or table keeps its "did not come through" notice
+            table = "".join("<p>%s</p>" % b for b in body if b)
     doc.add(t="fig", kind=kind, id=fid, label=label, caption=caption, imgs=imgs, table=table, page=page)
 
 
