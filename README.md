@@ -10,9 +10,7 @@ lit-reader turns an academic paper into an offline HTML reading copy, with reflo
 
 Most academic papers are published as PDFs laid out for print, which makes them hard work to read on a laptop. lit-reader is for researchers, students, journalists and anyone else who reads papers closely on a screen. It resets the paper for long reading and never summarises or rewrites it. Conversion can still lose or garble text, so lit-reader reports how much of the text reached the page.
 
-Most PDF viewers show you the printed page. lit-reader reflows the text and adds tools for reading it. I searched PyPI in November 2026 and found no other package that combines reflowed text with a contents sidebar, citation cards, reading settings, original page numbers and a saved position.
-
-What lit-reader does:
+Unlike most PDF viewers, which show you the printed page, lit-reader reflows the text from PDFs and adds tools for reading it:
 
 - **Text set for reading.** By default, lines run to about 65 characters, and lit-reader adds no automatic hyphenation. Long paragraphs are split at sentence ends, and an "As published" setting restores the original breaks.
 - **Citations that open in place.** Click a citation to read the reference in a card without losing your place. Footnotes sit in the margin, except in papers built from a PDF, where they follow the paragraph.
