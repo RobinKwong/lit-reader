@@ -324,7 +324,7 @@ class Inline(object):
             if t == "sc":
                 return '<span style="font-variant:small-caps">%s</span>' % inner
             return "<%s>%s</%s>" % (tag, inner, tag)
-        if t == "br":
+        if t in ("br", "break"):
             return "<br>"
         if t == "math":
             return math_html(k)
@@ -722,10 +722,13 @@ PAGE = """<!doctype html>
 
 def ledger_meta(ledger, pid):
     ledger = LEDGERS.get(ledger, ledger)
-    con = sqlite3.connect("file:%s?mode=ro" % Path(ledger).expanduser(), uri=True)
-    con.row_factory = sqlite3.Row
-    r = con.execute("select * from papers where pid=?", (pid,)).fetchone()
-    con.close()
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % Path(ledger).expanduser(), uri=True)
+        con.row_factory = sqlite3.Row
+        r = con.execute("select * from papers where pid=?", (pid,)).fetchone()
+        con.close()
+    except sqlite3.Error as e:
+        raise ReaderError("can't read the ledger %s: %s" % (ledger, e))
     if not r:
         raise ReaderError("%s is not in %s" % (pid, ledger))
     return {"pid": pid, "title": r["title"], "authors": [a.strip() for a in (r["authors"] or "").split(";") if a.strip()],
@@ -925,9 +928,32 @@ def visible_text(n):
 ARXIV_BLOCKS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "figure", "table", "ul", "ol", "dl"}
 
 
+def span_table(ix, n):
+    """LaTeXML sometimes builds a table from spans, for example when it has been resized."""
+    def owner(tr):
+        p = tr.parent
+        while p is not None and "ltx_tabular" not in p.cls():
+            p = p.parent
+        return p
+    rows = []
+    for tr in n.findall(lambda x: "ltx_tr" in x.cls()):
+        if owner(tr) is not n:
+            continue
+        cells = []
+        for td in tr.children():
+            if td.cls() & {"ltx_td", "ltx_th"}:
+                tag = "th" if "ltx_th" in td.cls() else "td"
+                spans = "".join(' %s="%s"' % (a, td.attrs[a]) for a in ("colspan", "rowspan") if re.fullmatch(r"\d{1,2}", td.attrs.get(a, "")))
+                cells.append("<%s%s>%s</%s>" % (tag, spans, ix.run(td).strip(), tag))
+        rows.append("<tr>%s</tr>" % "".join(cells))
+    return '<table class="data">%s</table>' % "".join(rows)
+
+
 class ArxivInline(Inline):
     def rule(self, n):
         c = n.cls()
+        if n.tag == "span" and "ltx_tabular" in c:
+            return span_table(self, n)
         if n.tag == "span" and "ltx_note" in c:
             if c & {"ltx_role_footnote", "ltx_role_footnotetext"}:
                 content = n.find(lambda x: "ltx_note_content" in x.cls())
@@ -1136,6 +1162,15 @@ def arxiv_figure(doc, ix, k, imgdir):
         return True
     table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table")  # a table holding only pictures is layout
                     if outer_table(t) and t.find(lambda x: x.tag == "img") is None and t.text().strip())
+
+    def outer_span_table(t):
+        p = t.parent
+        while p is not None and p is not k:
+            if p.tag == "table" or "ltx_tabular" in p.cls():
+                return False
+            p = p.parent
+        return t.find(lambda x: x.tag == "img") is None and bool(t.text().strip())
+    table += "".join(span_table(ix, t) for t in k.findall(lambda x: x.tag == "span" and "ltx_tabular" in x.cls()) if outer_span_table(t))
     kind = "table" if "ltx_table" in k.cls() else "figure"
     fid = "x-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None
     page = find_pdf_page(doc, label)
@@ -1233,16 +1268,16 @@ def jats_image(doc, href):
 
 
 def formula_html(n, doc):
-    """MathML if the article has it, then its TeX source, then its picture of the equation."""
+    """MathML if the article has it, then its picture of the equation, then its TeX source."""
     m = n.find(lambda x: x.tag == "math")
     if m is not None:
         return math_html(m)
-    tex = n.find(lambda x: x.tag == "tex-math")
-    if tex is not None:
-        return "<code>%s</code>" % esc(tex.text().strip())
     g = n.find(lambda x: x.tag in ("graphic", "inline-graphic"))
     u = jats_image(doc, g.attrs.get("href")) if g is not None else None
-    return img_tag(u, "Equation") if u else ""
+    if u:
+        return img_tag(u, "Equation")
+    tex = n.find(lambda x: x.tag == "tex-math")
+    return "<code>%s</code>" % esc(tex.text().strip()) if tex is not None else ""
 
 
 class JatsInline(Inline):
@@ -1338,8 +1373,9 @@ def jats_doc(meta, d):
             if t == "sec":
                 title = k.find(lambda x: x.tag == "title" and x.parent is k)
                 if title is not None:
+                    number = k.find(lambda x: x.tag == "label" and x.parent is k)
                     doc.add(t="h", level=min(2 + depth, 4), html=ix.run(title).strip(), id="j-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None,
-                            appendix=appendix)
+                            no=number.text().strip().rstrip(".") if number is not None else "", appendix=appendix)
                 walk(k, depth + 1)
             elif t == "p":
                 # a <p> can hold a figure or table; pull those out after the text
@@ -1399,6 +1435,8 @@ def jats_doc(meta, d):
             tb = k.find(lambda x: x.tag == "table")
             if tb is not None:
                 table = ix.one(tb)
+            if table:
+                imgs = []  # the same table supplied both as data and as a picture
             caption = ix.run(cap).strip() if cap is not None else ""
             foot = k.find(lambda x: x.tag == "table-wrap-foot")
             foot_text = " ".join(x for x in (ix.run(c).strip() for c in foot.children()) if x) if foot is not None else ""
@@ -1432,9 +1470,9 @@ def jats_doc(meta, d):
             for p in ack.findall(lambda x: x.tag == "p"):
                 doc.add(t="p", html=ix.run(p).strip())
         for k in back.children():  # appendices and sections such as data availability
-            for sec in ([k] if k.tag == "sec" else k.findall(lambda x: x.tag == "app") if k.tag == "app-group" else [k] if k.tag == "app" else []):
+            for sec in ([k] if k.tag in ("sec", "notes") else k.findall(lambda x: x.tag == "app") if k.tag == "app-group" else [k] if k.tag == "app" else []):
                 title = sec.find(lambda x: x.tag == "title" and x.parent is sec)
-                doc.add(t="h", level=2, html=ix.run(title).strip() if title is not None else "Appendix",
+                doc.add(t="h", level=2, html=ix.run(title).strip() if title is not None else ("Notes" if sec.tag == "notes" else "Appendix"),
                         appendix=not any(b.get("appendix") for b in doc.blocks))
                 walk(sec, 1)
     for ref in root.findall(lambda x: x.tag == "ref"):  # usually in <back>, but some articles keep them in the body
@@ -1641,6 +1679,7 @@ def docling_doc(meta, d, pages=None):
     pending = None  # paragraph text waiting for its continuation
     list_items = None
     list_depth = 0  # a list inside a list joins the outer one
+    list_numbered = False
     caption_ids = set()
     for kind, item in order:
         if kind in ("pictures", "tables"):
@@ -1676,6 +1715,7 @@ def docling_doc(meta, d, pages=None):
                 if list_depth == 0:
                     flush()
                     list_items = []
+                    list_numbered = False
                 list_depth += 1
             continue
         if kind == "group-end":
@@ -1683,7 +1723,7 @@ def docling_doc(meta, d, pages=None):
                 list_depth -= 1
                 if list_depth == 0:
                     if list_items:
-                        doc.add(t="list", ordered=item.get("label") == "ordered_list", items=list_items)
+                        doc.add(t="list", ordered=item.get("label") == "ordered_list" or list_numbered, items=list_items)
                     list_items = None
             continue
         if item.get("self_ref") in caption_ids:
@@ -1806,6 +1846,7 @@ def docling_doc(meta, d, pages=None):
             continue
         if label == "list_item" and list_items is not None:
             flush()
+            list_numbered = list_numbered or bool(item.get("enumerated"))
             list_items.append(esc(re.sub(r"^[•·\-–]\s*", "", text)))
             continue
         if label == "footnote" and last is not None and last["t"] == "fig" and last.get("kind") == "table" and (
@@ -1917,11 +1958,11 @@ def link_references(doc, raw):
     the text: numbered "(19)" / "(5, 8-10)" style, or author-year style."""
     if not raw:
         return
-    numbered = sum(1 for r in raw if re.match(r"^\s*\[?\d{1,3}[.\])]\s", r)) > len(raw) / 2
+    numbered = sum(1 for r in raw if re.match(r"^\s*\[?\d{1,3}[.\])]?\s", r)) > len(raw) / 2
     if numbered:
         cur = None
         for r in raw:
-            m = re.match(r"^\s*\[?(\d{1,3})[.\])]\s+(.*)$", r, re.S)
+            m = re.match(r"^\s*\[?(\d{1,3})[.\])]?\s+(.*)$", r, re.S)
             if m:
                 cur = [m.group(1), m.group(2)]
                 doc.refs.append(cur)
@@ -2350,7 +2391,7 @@ def jats_text(xml, out):
 
     def outermost(e):  # a reference list inside the body must not be counted twice
         if local(e.tag) in ("article-title", "abstract", "body", "ref-list", "ack", "app-group", "app") or (
-                local(e.tag) == "sec" and in_back[0]):
+                local(e.tag) in ("sec", "notes") and in_back[0]):
             walk(e)
             parts.append("\n")
         else:
