@@ -364,11 +364,13 @@ class Doc(object):
         self.source = ""          # one line: where the text came from
         self.pdf = None           # Path of the cached PDF, for page links
 
-    def note(self, inner_html):
+    def note(self, inner_html, shown=None):
+        """A sidenote. `shown` keeps the number the paper itself gives the note."""
         self.nnotes += 1
         n = self.nnotes
+        shown = shown or n
         return ('<span class="sn-mark" data-for="sn-%d" role="button" tabindex="0" aria-label="note %d">%d</span>'
-                '<span class="sidenote" id="sn-%d"><span class="n">%d</span>%s</span>') % (n, n, n, n, n, inner_html)
+                '<span class="sidenote" id="sn-%d"><span class="n">%d</span>%s</span>') % (n, shown, shown, n, shown, inner_html)
 
     def add(self, **b):
         self.blocks.append(b)
@@ -1819,7 +1821,7 @@ def link_endnotes(doc):
             b = doc.blocks[i]
             m = pat.search(b["html"], pos if i == at else 0) if b["t"] == "p" else None
             if m:
-                note = doc.note(notes[n])
+                note = doc.note(notes[n], n)
                 b["html"] = b["html"][:m.start()] + note + b["html"][m.end():]
                 at, pos = i, m.start() + len(note)
                 break
