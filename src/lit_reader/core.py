@@ -1057,7 +1057,9 @@ def arxiv_doc(meta, d):
                 items = ["<strong>%s</strong> %s" % (ix.run(a).strip(), ix.run(b).strip()) for a, b in zip(terms[::2], terms[1::2])]
                 doc.add(t="list", ordered=False, plain=True, items=items)
                 continue
-            if any(isinstance(x, str) and x.strip() for x in k.kids):  # text sitting directly in a container
+            if "ltx_note" in c:
+                continue  # notes are placed where they are cited
+            if k.tag in ("div", "section") and any(isinstance(x, str) and x.strip() for x in k.kids):  # text sitting directly in a container
                 run = Node("p", parent=k)
                 for x in k.kids + [None]:
                     if x is None or (isinstance(x, Node) and x.tag in ARXIV_BLOCKS):
@@ -1114,16 +1116,6 @@ def arxiv_figure(doc, ix, k, imgdir):
             p = p.parent
         return True
     table = "".join(ix.one(t) for t in k.findall(lambda x: x.tag == "table") if outer_table(t))
-    if not imgs and not table:  # an algorithm or other float made of text
-        lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
-        def in_caption(p):
-            while p is not None and p is not k:
-                if p.tag == "figcaption":
-                    return True
-                p = p.parent
-            return False
-        body = [ix.run(p).strip() for p in k.findall(lambda x: x.tag == "p") if not in_caption(p)]
-        table = '<pre class="listing">%s</pre>' % esc("\n".join(lines)) if lines else "".join("<p>%s</p>" % b for b in body if b)
     kind = "table" if "ltx_table" in k.cls() else "figure"
     fid = "x-" + safe_id(k.attrs.get("id", "")) if k.attrs.get("id") else None
     if not label and not caption and not imgs and not table:
@@ -1134,6 +1126,17 @@ def arxiv_figure(doc, ix, k, imgdir):
         crop = doc._crops.get(float_key(label)) if hasattr(doc, "_crops") else None
         if crop:
             imgs, page = [(crop[0], alts[0] if alts else "")], crop[1]
+    if not imgs and not table:  # an algorithm or other float made of text
+        lines = [ln.text().rstrip() for ln in k.findall(lambda x: "ltx_listingline" in x.cls())]
+
+        def spoken_only(p):  # captions and the accessibility descriptions of a lost image
+            while p is not None and p is not k:
+                if p.tag == "figcaption" or "ltx_acm_description" in p.cls():
+                    return True
+                p = p.parent
+            return False
+        body = [ix.run(p).strip() for p in k.findall(lambda x: x.tag == "p") if not spoken_only(p)]
+        table = '<pre class="listing">%s</pre>' % esc("\n".join(lines)) if lines else "".join("<p>%s</p>" % b for b in body if b)
     doc.add(t="fig", kind=kind, id=fid, label=label, caption=caption, imgs=imgs, table=table, page=page)
 
 
