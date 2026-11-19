@@ -15,7 +15,7 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **Text set for reading.** By default, lines run to about 65 characters, and lit-reader adds no automatic hyphenation. Long paragraphs are split at sentence ends, and an "As published" setting restores the original breaks.
 - **Citations that open in place.** Click a citation to read the reference in a card without losing your place. Footnotes sit in the margin, except in papers built from a PDF, where they follow the paragraph.
 - **A sense of where you are.** The contents sidebar shows the minutes in each section, the top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
-- **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file.
+- **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Page numbers come only from papers built from a PDF.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
@@ -67,7 +67,7 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 
 **If you give a PDF, lit-reader reads that PDF.** Your file may be a particular version of the paper, such as an accepted manuscript, so it is never replaced by an online copy without your asking.
 
-**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then arXiv's PDF. When arXiv has no HTML version of a paper, lit-reader tries [ar5iv](https://ar5iv.labs.arxiv.org/), arXiv Labs' earlier conversion, before the PDF.
+**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then [ar5iv](https://ar5iv.labs.arxiv.org/)'s conversion, then arXiv's PDF. ar5iv is arXiv Labs' earlier HTML conversion, and lit-reader uses it only when arXiv says it has no HTML version of the paper. If arXiv is down, lit-reader reports that instead.
 
 To change this, use `--route`:
 
@@ -75,7 +75,7 @@ To change this, use `--route`:
 |---|---|
 | `--route auto` | The default, as described above. |
 | `--route online` | Prefers arXiv's HTML or Europe PMC's XML, even when you give a PDF. If neither is available, it falls back to your PDF. |
-| `--route arxiv` | Uses arXiv's HTML only. |
+| `--route arxiv` | Uses arXiv's HTML, or ar5iv's conversion when arXiv has none. |
 | `--route jats` | Uses Europe PMC's XML only. |
 | `--route pdf` | Uses the PDF only. |
 
@@ -103,6 +103,7 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Equations:** arXiv pages keep real maths. Europe PMC pages use the article's maths if it has any, and otherwise its image of the equation or its TeX source. In PDFs, an equation Docling can read appears as plain text, so check it against the original. One it can't read appears as an image of the printed equation.
 - **Screens:** lit-reader is designed for reading on a laptop or desktop. Pages adapt to narrow screens, but they haven't been tested on a real phone, and each page needs the `assets` folder beside it.
+- **E-readers:** EPUB copies pass structural checks but haven't been tested on a Kindle or another e-reader yet. How maths and wide tables look depends on the e-reader.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
 
 ## Checking a reading copy
@@ -114,7 +115,7 @@ coverage: 95.6% of the 5438 words in the PDF's text reached the page
   missing run of 58 words: the proportion of repeated layer 0 0 20 0 15 ...
 ```
 
-A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original. For a PDF, the reading copy then offers a "Show the original page" button at that page, and the build lists the pages it flagged.
+A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original. For a PDF, the reading copy then offers a "Show the original page" button at that page, for up to ten pages, and the build lists the pages it flagged.
 
 Pages built from arXiv HTML or a PDF are compared with the PDF's text, which needs poppler. Without it, arXiv pages still build but skip the check. Pages built from Europe PMC are compared with the article's XML.
 
