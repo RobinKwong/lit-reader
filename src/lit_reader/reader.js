@@ -11,7 +11,7 @@
     try { var v = localStorage.getItem(key); return v === null ? dflt : JSON.parse(v); }
     catch (e) { return dflt; }
   }
-  function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
+  function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); return true; } catch (e) { return false; } }
 
   /* ---------- preferences ---------- */
   var PREF_KEY = "litreader.prefs";
@@ -186,6 +186,193 @@
     if (card && !card.contains(e.target)) closeCard();
   });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeCard(true); });
+
+  /* ---------- saved quotes ----------
+     Select text and choose "Save quote" (or press Q). Quotes stay in this
+     browser, per paper, with the section and printed page they came from. */
+  var CLIP_KEY = "litreader.clips." + pid;
+  function loadClips() { var v = load(CLIP_KEY, []); return Array.isArray(v) ? v : []; }  // anything else in storage is ignored, not trusted
+  var clips = loadClips();
+  var clipsBtn = document.getElementById("clips");
+  var clipsPanel = document.getElementById("clips-panel");
+  var clipCount = document.getElementById("clip-count");
+  var cite = document.body.getAttribute("data-cite") || "";
+  var reference = document.body.getAttribute("data-reference") || document.title;
+  var saveBtn = null, pending = null, stored = true;  // stored: false once the browser refuses to keep quotes
+
+  function quoteText(range) {
+    var div = document.createElement("div");
+    div.appendChild(range.cloneContents());
+    div.querySelectorAll(".sidenote, .sn-mark, .pg, details, button, .clip-save").forEach(function (n) { n.remove(); });
+    div.querySelectorAll("p, li, .chunk, h2, h3, h4, figcaption, td, th").forEach(function (n) { n.appendChild(document.createTextNode(" ")); });
+    return div.textContent.replace(/\s+/g, " ").trim();
+  }
+  function pageBefore(el) {
+    var pgs = document.querySelectorAll("main .pg"), found = "";
+    for (var i = 0; i < pgs.length; i++) {
+      if (pgs[i].compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) found = pgs[i].textContent.trim();
+      else break;
+    }
+    return found.replace(/^p\.\s*/, "");
+  }
+  function locate(range) {
+    var n = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentNode;
+    var block = n.closest("main [data-w], main [data-sec], main section.abstract");
+    if (!block) {  // a selection that starts between paragraphs: the first paragraph it reaches
+      var all = document.querySelectorAll("main [data-w]");
+      for (var k = 0; k < all.length && !block; k++) if (range.intersectsNode(all[k])) block = all[k];
+    }
+    var page = block ? pageBefore(block) : "";
+    var div = document.createElement("div");
+    div.appendChild(range.cloneContents());
+    var inner = div.querySelectorAll(".pg");
+    var last = inner.length ? inner[inner.length - 1].textContent.trim().replace(/^p\.\s*/, "") : "";
+    if (last && page && last !== page) page = page + "–" + last;
+    else if (last && !page) page = last;
+    return { block: block ? block.id : "", sec: block && block.classList.contains("abstract") ? (block.querySelector("h2") || {}).textContent || "Abstract"
+         : block && block.getAttribute("data-in") ? sectionTitle(block.getAttribute("data-in")) : "", page: page };
+  }
+  function citeFor(c) {
+    return "(" + cite + (c.page ? (c.page.indexOf("–") > 0 ? ", pp. " : ", p. ") + c.page : "") + ")";
+  }
+  function asText(c) { return "“" + c.text + "” " + citeFor(c); }
+  function asMarkdown() {
+    var out = ["# Quotes from " + document.title, "", reference, ""];
+    clips.forEach(function (c) {
+      out.push("> " + c.text, "", citeFor(c) + (c.sec ? " · " + c.sec : ""), "");
+    });
+    return out.join("\n");
+  }
+  function copy(text) {
+    function fallback() {
+      var t = document.createElement("textarea"), ok = false; t.value = text; t.setAttribute("readonly", "");
+      t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select();
+      try { ok = document.execCommand("copy"); } catch (e) {}
+      t.remove();
+      return ok;
+    }
+    function done(ok) { toast(ok ? "<span>Copied.</span>" : "<span>Couldn't copy. Use Download as Markdown instead.</span>", ok ? 2500 : 5000); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
+    else done(fallback());
+  }
+  function hideSave() { if (saveBtn) { saveBtn.remove(); saveBtn = null; } pending = null; }
+  function saveClip() {
+    if (!pending) return;
+    var c = pending;
+    c.id = String(Date.now());
+    c.at = new Date().toISOString();
+    if (stored) clips = loadClips();  // another tab may have saved quotes since this one loaded
+    clips.push(c); stored = save(CLIP_KEY, clips);
+    hideSave();
+    var sel = window.getSelection(); if (sel) sel.removeAllRanges();
+    renderClips();
+    toast(stored ? "<span>Quote saved. Open Quotes in the top bar to copy it with its citation.</span>"
+                 : "<span>This browser won't keep quotes for local pages, so they last only until you close this tab. Open Quotes to copy or download them now.</span>", stored ? 4000 : 9000);
+  }
+  function renderClips() {
+    if (clipCount) clipCount.textContent = clips.length ? "(" + clips.length + ")" : "";
+    if (!clipsPanel) return;
+    clipsPanel.innerHTML = "";
+    var h = document.createElement("div"); h.className = "clips-head";
+    h.textContent = clips.length ? "Saved quotes" : "No saved quotes yet";
+    clipsPanel.appendChild(h);
+    if (!clips.length) {
+      var p = document.createElement("p"); p.className = "note";
+      p.textContent = "Select text in the paper, then choose Save quote or press Q. Quotes stay in this browser.";
+      clipsPanel.appendChild(p);
+      return;
+    }
+    var all = document.createElement("div"); all.className = "row";
+    [["Copy all", function () { copy(asMarkdown()); }],
+     ["Download as Markdown", function () {
+       var a = document.createElement("a");
+       a.href = URL.createObjectURL(new Blob([asMarkdown()], { type: "text/markdown" }));
+       a.download = "quotes-" + (document.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "paper") + ".md";
+       document.body.appendChild(a); a.click(); a.remove();
+       setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+     }]].forEach(function (x) {
+      var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
+      b.addEventListener("click", x[1]); all.appendChild(b);
+    });
+    clipsPanel.appendChild(all);
+    var ol = document.createElement("ol"); ol.className = "clips";
+    clips.forEach(function (c, i) {
+      var li = document.createElement("li");
+      var q = document.createElement("blockquote"); q.textContent = c.text;
+      var m = document.createElement("div"); m.className = "note";
+      m.textContent = citeFor(c) + (c.sec ? " · " + c.sec : "");
+      var acts = document.createElement("div"); acts.className = "acts";
+      [["Copy", function () { copy(asText(c) + "\n\n" + reference); }],
+       ["Go to", function () {
+         setClips(false);
+         var el = document.getElementById(c.block); if (!el) return;
+         el.scrollIntoView({ block: "center" }); el.classList.add("flash-block");
+         setTimeout(function () { el.classList.remove("flash-block"); }, 1600);
+         el.tabIndex = -1; el.focus({ preventScroll: true });
+       }],
+       ["Remove", function () {
+         clips = (stored ? loadClips() : clips).filter(function (x) { return x.id !== c.id; });
+         if (stored) stored = save(CLIP_KEY, clips);
+         renderClips(); clipsBtn.focus();
+       }]
+      ].forEach(function (x) {
+        var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
+        b.setAttribute("aria-label", x[0] + " quote " + (i + 1));
+        b.addEventListener("click", function (e) { e.stopPropagation(); x[1](); });
+        acts.appendChild(b);
+      });
+      li.appendChild(q); li.appendChild(m); li.appendChild(acts); ol.appendChild(li);
+    });
+    clipsPanel.appendChild(ol);
+  }
+  function setClips(open, refocus) {
+    if (!clipsPanel) return;
+    if (open) { setPanel(false); if (stored) clips = loadClips(); renderClips(); }
+    clipsPanel.hidden = !open;
+    clipsBtn.setAttribute("aria-expanded", String(open));
+    if (open) { var f = clipsPanel.querySelector("button"); if (f) f.focus(); }
+    if (!open && refocus) clipsBtn.focus();
+  }
+  if (clipsBtn && clipsPanel) {
+    renderClips();
+    clipsBtn.addEventListener("click", function (e) { e.stopPropagation(); setClips(clipsPanel.hidden); });
+    document.addEventListener("click", function (e) { if (!clipsPanel.hidden && !clipsPanel.contains(e.target)) setClips(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !clipsPanel.hidden) setClips(false, true); });
+    if (aa) aa.addEventListener("click", function () { if (!clipsPanel.hidden) setClips(false); });
+  }
+  function checkSelection() {
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSave(); return; }
+    var range = sel.getRangeAt(0);
+    var main = document.querySelector("main");
+    var anc = range.commonAncestorContainer;
+    if (!main || !main.contains(anc) || (anc.nodeType === 1 ? anc : anc.parentNode).closest("header.paper, .references, .clip-save, footer, .done-box, .orig-page")) { hideSave(); return; }
+    var text = quoteText(range);
+    if (text.length < 3) { hideSave(); return; }
+    pending = locate(range); pending.text = text;
+    if (!saveBtn) {
+      saveBtn = document.createElement("button");
+      saveBtn.type = "button"; saveBtn.className = "clip-save"; saveBtn.textContent = "Save quote";
+      saveBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });  // keep the selection
+      saveBtn.addEventListener("click", function (e) { e.stopPropagation(); saveClip(); });
+      document.body.appendChild(saveBtn);
+    }
+    var r = range.getBoundingClientRect();
+    var top = window.scrollY + r.top - saveBtn.offsetHeight - 8;
+    if (r.top - saveBtn.offsetHeight - 8 < 56) top = window.scrollY + r.bottom + 8;
+    var left = Math.min(window.scrollX + r.left + r.width / 2 - saveBtn.offsetWidth / 2, window.scrollX + document.documentElement.clientWidth - saveBtn.offsetWidth - 12);
+    saveBtn.style.top = top + "px"; saveBtn.style.left = Math.max(8, left) + "px";
+  }
+  var selTimer = null;
+  if (clipsBtn) document.addEventListener("selectionchange", function () { clearTimeout(selTimer); selTimer = setTimeout(checkSelection, 150); });
+  if (clipsBtn) document.addEventListener("keydown", function (e) {
+    var tag = (e.target.tagName || "").toLowerCase();
+    if ((e.key === "q" || e.key === "Q") && !e.metaKey && !e.ctrlKey && !e.altKey && tag !== "input" && tag !== "textarea" && !e.target.isContentEditable) {
+      checkSelection();  // the selection may have changed in the last moment
+      if (pending) { e.preventDefault(); saveClip(); }
+    }
+    if (e.key === "Escape") hideSave();
+  });
 
   /* ---------- figures: click to widen ---------- */
   document.addEventListener("click", function (e) {

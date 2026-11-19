@@ -15,9 +15,11 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **Text set for reading.** By default, lines run to about 65 characters, and lit-reader adds no automatic hyphenation. Long paragraphs are split at sentence ends, and an "As published" setting restores the original breaks.
 - **Citations that open in place.** Click a citation to read the reference in a card without losing your place. Footnotes sit in the margin, except in papers built from a PDF, where they follow the paragraph.
 - **A sense of where you are.** The contents sidebar shows the minutes in each section, the top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
+- **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
-- **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler.
+- **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
+- **A copy for your e-reader.** Add `--epub` to also get an EPUB, with its page list and linked notes, to send to a Kindle or another e-reader.
 
 ## Install
 
@@ -120,9 +122,9 @@ If a paper converts badly, please [open an issue](https://github.com/RobinKwong/
 
 ## Privacy
 
-lit-reader uses no AI service, analytics or account. Conversion happens on your machine, reading copies load nothing from the internet, and your settings and reading position stay in your browser. It uses the network only in these cases:
+lit-reader uses no AI service, analytics or account. Conversion happens on your machine, reading copies load nothing from the internet, and your settings, reading position and saved quotes stay in your browser. It uses the network only in these cases:
 
-- **Fetching a paper:** an arXiv ID, DOI or PMCID is sent to arXiv, Crossref or Europe PMC, and the paper comes back.
+- **Fetching a paper:** an arXiv ID, DOI or PMCID is sent to arXiv, ar5iv, Crossref or Europe PMC, and the paper comes back.
 - **Looking up a local PDF:** an arXiv ID or DOI found on the first page is sent to arXiv or Crossref to find the title and authors. This happens on every route, including `--route pdf`, and can't be turned off. The PDF itself is never uploaded.
 - **Installing:** uv downloads lit-reader, and Docling downloads its models the first time it runs.
 - **Following a link:** links in a reading copy open in your browser like any other link.

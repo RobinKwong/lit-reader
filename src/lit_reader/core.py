@@ -387,6 +387,48 @@ AUTHORS_SHOWN = 3   # a list longer than AUTHORS_MAX opens with this many names
 AUTHORS_MAX = 5
 
 
+def surname(name):
+    name = name.strip()
+    if "," in name:
+        return name.split(",", 1)[0].strip()
+    parts = [p for p in name.split() if p.rstrip(".,").lower() not in ("jr", "sr", "ii", "iii", "iv")]
+    if not parts:
+        return name
+    i = len(parts) - 1
+    while i > 1 and parts[i - 1].lower() in ("van", "von", "der", "den", "de", "del", "della", "di", "da", "du", "la", "le", "dos", "das", "ter"):
+        i -= 1  # "Johannes van der Waals" is cited as "van der Waals"
+    return " ".join(parts[i:])
+
+
+def short_citation(m):
+    """Author-year, as a quote from this paper would be cited in the text."""
+    a = [surname(x) for x in (m.get("authors") or []) if x.strip()]
+    if a:
+        who = a[0] if len(a) == 1 else "%s and %s" % (a[0], a[1]) if len(a) == 2 else "%s et al." % a[0]
+    else:  # no authors on record (a local PDF with no DOI): cite by a short title, not as anonymous
+        t = (m.get("title") or "Untitled").split()
+        who = "“%s”" % (" ".join(t[:5]) + ("…" if len(t) > 5 else ""))
+    return "%s, %s" % (who, m.get("year") or "n.d.")
+
+
+def full_reference(m, title):
+    """One plain line for a reference list: authors (year). Title. Venue. Link."""
+    a = [x.strip() for x in (m.get("authors") or []) if x.strip()]
+    who = ", ".join(a[:20]) + (" et al." if len(a) > 20 else "") if a else ""
+    end = lambda t: t if t.endswith(("?", "!")) else t.rstrip(".") + "."  # "Lonely?" keeps its own mark
+    bits = ["%s (%s)." % (who, m.get("year") or "n.d.")] if who else []
+    bits.append(end(title.strip()) + ("" if who else " (%s)." % (m.get("year") or "n.d.")))
+    if m.get("venue"):
+        bits.append(end(m["venue"].strip()))
+    if m.get("doi"):
+        bits.append("https://doi.org/" + m["doi"])
+    elif m.get("arxiv"):
+        bits.append("https://arxiv.org/abs/" + m["arxiv"])
+    elif m.get("url"):
+        bits.append(m["url"])
+    return " ".join(bits)
+
+
 def authors_html(authors):
     """The byline. A long author list starts collapsed, so the paper comes first."""
     if len(authors) <= AUTHORS_MAX:
@@ -554,7 +596,8 @@ def render(doc, list_line=None, list_pos=None):
 
     def chunk_ps(a):
         return re.sub(r"<p>(.*?)</p>", lambda m: "<p>%s</p>" % chunked(m.group(1), 40), a, flags=re.S)
-    abstracts = "".join('<section class="abstract"><h2>%s</h2>%s</section>' % (esc(h), chunk_ps(a)) for h, a in doc.abstracts)
+    abstracts = "".join('<section class="abstract" id="abstract-%d"><h2>%s</h2>%s</section>' % (n + 1, esc(h), chunk_ps(a))
+                        for n, (h, a) in enumerate(doc.abstracts))
     total_words = sum(words(strip_tags(block_text(b))) for b in doc.blocks if b["t"] != "h")
     authors = m.get("authors") or []
     meta_bits = [x for x in [esc(m.get("venue") or ""), str(m.get("year") or "")] if x]
@@ -579,6 +622,7 @@ def render(doc, list_line=None, list_pos=None):
     title_text = strip_tags(m.get("title_html") or esc(m.get("title", ""))).strip()
     page = PAGE.format(
         title=esc(title_text), pid=attr(m.get("pid", "")),
+        cite=attr(short_citation(m)), reference=attr(full_reference(m, title_text)),
         kicker=esc(" · ".join(x for x in [m.get("kicker")] if x) or "Reading copy"),
         title_html=m.get("title_html") or esc(m.get("title", "")),
         part=('<p class="part">%s</p>' % esc(m["part"])) if m.get("part") else "",
@@ -705,14 +749,16 @@ PAGE = """<!doctype html>
 <link rel="stylesheet" href="assets/fonts.css">
 <link rel="stylesheet" href="assets/reader.css">
 </head>
-<body data-pid="{pid}">
+<body data-pid="{pid}" data-cite="{cite}" data-reference="{reference}">
 <a class="skip" href="#text-start">Skip to the text</a>
 <div class="bar">
   <button id="toc-toggle" type="button" aria-expanded="false" aria-controls="toc">☰ Contents</button>
   <span class="where" id="where"></span>
   {all_link}
+  <button id="clips" type="button" aria-expanded="false" aria-controls="clips-panel">Quotes <span id="clip-count"></span></button>
   <button id="aa" type="button" aria-label="Reading settings" aria-expanded="false" aria-controls="panel">Aa</button>
 </div>
+<div class="panel clips-panel" id="clips-panel" role="group" aria-label="Saved quotes" hidden></div>
 <div class="progress" id="progress"></div>
 {panel}
 <div class="layout">

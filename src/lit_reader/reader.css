@@ -87,6 +87,26 @@ main { grid-column: 2; padding: 5rem 0 8rem; min-width: 0; }
 .panel .seg button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
 .panel .note { color: var(--muted); font-size: 12px; margin-top: .6rem; }
 
+/* ---------- saved quotes ---------- */
+.clips-panel { width: min(26rem, calc(100vw - 2rem)); max-height: calc(100vh - 5rem); overflow-y: auto; }
+.clips-head { font-weight: 600; margin-bottom: .3rem; }
+.clips-panel button {
+  font: inherit; color: var(--fg); background: none; border: 1px solid var(--muted);
+  border-radius: 5px; padding: .2rem .5rem; cursor: pointer;
+}
+.clips-panel .row { justify-content: flex-start; }
+ol.clips { list-style: none; margin: .6rem 0 0; padding: 0; }
+ol.clips li { border-top: 1px solid var(--faint); padding: .7rem 0; }
+ol.clips blockquote { margin: 0; font-family: var(--font, inherit); font-size: 14px; line-height: 1.45; }
+ol.clips .note { margin-top: .35rem; }
+ol.clips .acts { display: flex; gap: .3rem; margin-top: .45rem; }
+.clip-save {
+  position: absolute; z-index: 35; font: 600 13px/1 var(--ui); color: var(--bg); background: var(--accent);
+  border: 0; border-radius: 999px; padding: .45rem .8rem; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.2);
+}
+#clip-count:empty { display: none; }
+@media print { .clip-save { display: none !important; } }
+
 /* ---------- contents sidebar ---------- */
 nav.toc {
   grid-column: 1; position: sticky; top: 2.75rem; align-self: start;
