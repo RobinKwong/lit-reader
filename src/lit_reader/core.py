@@ -2249,7 +2249,7 @@ def write_assets(out=None):
     (a / "fonts.css").write_text("/* Literata, SIL Open Font License, via @fontsource-variable/literata@5.3.0 */\n" + "\n".join(faces))
 
 
-def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None):
+def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None, epub=False):
     meta = ledger_meta(ledger, pid)
     d = SRC / slug(meta)
     if route == "arxiv":
@@ -2263,12 +2263,14 @@ def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part
     doc.meta["part"] = part
     line = list_entry(list_n) if list_n else None
     pos = ("Must-read %d of %d" % (list_n, list_total)) if list_n and list_total else None
-    page, total = render(doc, line, pos)
+    page, total, cov = finish_page(doc, meta, pages, line, pos)
     write_assets()
     name = slug(meta) + ".html"
     (OUT / name).write_text(page, encoding="utf-8")
     print("wrote %s (%d words, %d references, %d notes)" % (OUT / name, total, len(doc.refs), doc.nnotes))
-    coverage(page, meta, pages)
+    report_coverage(cov, doc)
+    if epub:
+        write_epub_copy(page, meta, OUT / (slug(meta) + ".epub"))
     return name
 
 
@@ -2288,7 +2290,7 @@ def cmd_build(a):
                 a.list_n = a.list_n or it.get("n")
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
-    build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part)
+    build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part, a.epub)
     if LIST_FILE.exists():
         cmd_index(a)
 
@@ -2300,7 +2302,7 @@ def cmd_all(a):
             if it.get("route"):
                 try:
                     build_one(it["pid"], it["ledger"], it["route"], it.get("n") if L["name"] == "Must-read" else None,
-                              len(L["items"]), it.get("pages"), it.get("part"))
+                              len(L["items"]), it.get("pages"), it.get("part"), a.epub)
                 except ReaderError as e:
                     print("skipped %s: %s" % (it["pid"], e))
     cmd_index(a)
@@ -2688,10 +2690,22 @@ def cmd_standalone(a):
         shutil.copyfile(str(meta["pdf_path"]), str(out / "paper.pdf"))
     target.write_text(page, encoding="utf-8")
     print("wrote %s (route %s, %d words, %d references, %d notes)" % (target, route, total, len(doc.refs), doc.nnotes))
-    coverage(page, doc.meta, a.pages)
+    report_coverage(cov, doc)
+    if a.epub:
+        write_epub_copy(page, doc.meta, out / (name + ".epub"))
 
 
 LEDGER_COMMANDS = ("fetch", "pdf-convert", "build", "index", "all")
+
+
+def write_epub_copy(page, meta, path):
+    from .epub import write_epub  # only needed when asked for
+    try:
+        write_epub(page, meta, path)
+    except Exception as e:  # the HTML copy is already written; one failed EPUB shouldn't stop a batch
+        print("  EPUB not written (%s): %s" % (type(e).__name__, e))
+        return
+    print("wrote %s" % path)
 
 
 def standalone_parser():
@@ -2704,6 +2718,7 @@ def standalone_parser():
                     help="source to use. auto (default) keeps a local PDF as given and otherwise picks the best source; "
                          "online prefers arXiv or Europe PMC even when you supply a PDF")
     ap.add_argument("--pages", help="PDF route only: convert these pages, for example 12-30")
+    ap.add_argument("--epub", action="store_true", help="also write an EPUB copy for an e-reader")
     return ap
 
 
@@ -2733,8 +2748,10 @@ def main(argv=None):
     b.add_argument("--route", choices=["arxiv", "jats", "pdf"], required=True)
     b.add_argument("--list-n", type=int)
     b.add_argument("--pages")
+    b.add_argument("--epub", action="store_true")
     sub.add_parser("index")
-    sub.add_parser("all")
+    al = sub.add_parser("all")
+    al.add_argument("--epub", action="store_true")
     a = ap.parse_args(argv)
     try:
         apply_settings()

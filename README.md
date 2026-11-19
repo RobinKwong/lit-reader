@@ -59,6 +59,7 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `-o DIR` | Writes the reading copy to `DIR` instead. |
 | `--route ROUTE` | Chooses the source, as described in the next section. |
 | `--pages A-B` | Converts only these pages of a PDF, for example `--pages 12-30`. |
+| `--epub` | Also writes an EPUB copy into the same folder. |
 
 ## Which source is used
 
@@ -128,7 +129,7 @@ lit-reader uses no AI service, analytics or account. Conversion happens on your 
 
 ## Copyright
 
-Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one.
+Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one. The same applies to EPUB copies.
 
 ## Licence
 
