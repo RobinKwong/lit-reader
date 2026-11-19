@@ -363,6 +363,7 @@ class Doc(object):
         self.nnotes = 0
         self.source = ""          # one line: where the text came from
         self.pdf = None           # Path of the cached PDF, for page links
+        self.page_images = {}     # PDF page -> image of the printed page, offered where text may be missing
 
     def note(self, inner_html, shown=None):
         """A sidenote. `shown` keeps the number the paper itself gives the note."""
@@ -465,6 +466,22 @@ def render(doc, list_line=None, list_pos=None):
             w += b.get("_w", 0) or words(strip_tags(block_text(b)))
         sec_words[i] = w
 
+    labels = dict((b["pdf"], b["label"]) for b in doc.blocks if b["t"] == "page" and b.get("pdf"))
+    shown = set()
+
+    def original_pages(upto):
+        """The printed page, behind a toggle, for each flagged page up to `upto`."""
+        res = []
+        for p in sorted(doc.page_images):
+            if p in shown or (upto is not None and p > upto):
+                continue
+            shown.add(p)
+            name = ("p. %s" % labels[p]) if labels.get(p) else ("page %d of the PDF" % p)
+            res.append('<details class="orig-page"><summary>Show the original page (%s)</summary>'
+                       '<p class="orig-note">Some text on this page may not have come through. This is the page as printed.</p>%s</details>'
+                       % (esc(name), img_tag(doc.page_images[p], "The original %s" % name)))
+        return "".join(res)
+
     for i, b in enumerate(doc.blocks):
         t = b["t"]
         bid += 1
@@ -478,11 +495,11 @@ def render(doc, list_line=None, list_pos=None):
                 body = False
                 out.append('<div class="appendix-start"></div>')
             lvl = min(max(b["level"], 2), 4)
-            b["html"] = re.sub(r"\.\s*$", "", b["html"].strip())  # run-in heads: "Control Variables."
-            title = heading_text(b["html"]).strip()
+            h_html = re.sub(r"\.\s*$", "", b["html"].strip())  # run-in heads: "Control Variables." (the doc stays as it was: it may be rendered twice)
+            title = heading_text(h_html).strip()
             no = '<span class="secno">%s</span>' % esc(b["no"]) if b.get("no") else ""
             out.append('<h%d id="%s" data-sec="1" data-title="%s">%s%s</h%d>' % (
-                lvl, hid, attr(((b.get("no") or "") + " " + title).strip()), no, b["html"], lvl))
+                lvl, hid, attr(((b.get("no") or "") + " " + title).strip()), no, h_html, lvl))
             if lvl <= 3:
                 mins = max(1, round(sec_words.get(i, 0) / float(WPM)))
                 toc.append((lvl, hid, ((b.get("no") or "") + " " + title).strip(), mins))
@@ -492,8 +509,12 @@ def render(doc, list_line=None, list_pos=None):
         if t == "p":
             out.append("<p %s>%s</p>" % (common, chunked(b["html"])))
         elif t == "page":
+            if doc.page_images and b.get("pdf"):
+                out.append(original_pages(b["pdf"] - 1))  # flagged pages that have no marker of their own
             out.append('<span class="pg" id="pg-%s">%s</span>' % (
                 safe_id(str(b["label"])), (pdf_anchor(doc, b) or "p. " + esc(str(b["label"])))))
+            if doc.page_images and b.get("pdf"):
+                out.append(original_pages(b["pdf"]))
         elif t == "list":
             tag = "ol" if b.get("ordered") else "ul"
             out.append('<%s %s%s>%s</%s>' % (tag, common, ' class="plain"' if b.get("plain") else "", "".join("<li>%s</li>" % x for x in b["items"]), tag))
@@ -518,6 +539,9 @@ def render(doc, list_line=None, list_pos=None):
                     b.get("caption") or "", (" " + link) if link else "")
             fid = ' data-fig="%s"' % attr(b["id"]) if b.get("id") else ""
             out.append('<figure %s%s>%s%s</figure>' % (common.replace('id="b%d"' % bid, 'id="%s"' % (b.get("id") or "b%d" % bid)), fid, "".join(parts), cap))
+
+    if doc.page_images:
+        out.append(original_pages(None))
 
     # references
     refs_html = ""
@@ -2071,29 +2095,52 @@ def printed_page_numbers(j):
 # Coverage check
 # --------------------------------------------------------------------------
 
-def tokens(text):
+def tokens(text, pages_of=None):
+    """Lower-case words. With a list `pages_of`, also appends each word's page
+    index, counted by the form feeds pdftotext puts between pages."""
     text = unicodedata.normalize("NFKC", text).lower()
-    text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
-    return re.findall(r"[a-z0-9]+", text)
+    if pages_of is None:
+        return re.findall(r"[a-z0-9]+", re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text))
+    # a word hyphenated across a page break keeps the break as \x00 inside it, so the count stays right
+    text = re.sub(r"(\w)-\s*\n\s*(\w)", lambda m: m.group(1) + "\x00" * m.group(0).count("\f") + m.group(2), text)
+    out, page = [], 0
+    for m in re.finditer(r"\f|[a-z0-9\x00]+", text):
+        w = m.group()
+        if w == "\f":
+            page += 1
+            continue
+        breaks = w.count("\x00")
+        w = w.replace("\x00", "")
+        if w:
+            out.append(w)
+            pages_of.append(page)
+        page += breaks
+    return out
 
 
-def coverage(page_html, meta, pages=None):
+def coverage(page_html, meta, pages=None, report=True):
+    """How much of the source text reached the page. Returns the counts and the
+    missing runs, each with the PDF pages its words came from."""
     txt = source_text(meta)
     if not txt:
-        print("  coverage: no source text to compare against")
-        return
+        if report:
+            print("  coverage: no source text to compare against")
+        return None
     raw = txt.read_text(encoding="utf-8", errors="replace")
+    first = 1
     if pages:  # compare against the converted pages only (pdftotext separates pages with form feeds)
         lo, hi = (int(x) for x in pages.split("-"))
         raw = "\f".join(raw.split("\f")[lo - 1:hi])
-    src = tokens(raw)
+        first = lo
+    pg = []
+    src = tokens(raw, pg)
     body = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", page_html, flags=re.S)
+    body = re.sub(r"<details class=\"orig-page\">.*?</details>", " ", body, flags=re.S)
     body = re.sub(r'<img[^>]*>', " ", body)
     got = tokens(strip_tags(body))
     cs, cg = Counter(src), Counter(got)
     hit = sum(min(n, cg[w]) for w, n in cs.items())
-    print("  coverage: %.1f%% of the %d words in the %s reached the page" % (
-        100.0 * hit / max(1, len(src)), len(src), meta.get("text_label", "cached text")))
+    cov = {"hit": hit, "n": len(src), "label": meta.get("text_label", "cached text"), "runs": [], "first": first}
     grams = set(tuple(got[i:i + 5]) for i in range(len(got) - 4))
     miss = [tuple(src[i:i + 5]) not in grams for i in range(len(src) - 4)]
     runs, i = [], 0
@@ -2103,14 +2150,85 @@ def coverage(page_html, meta, pages=None):
             while k < len(miss) and miss[k]:
                 k += 1
             if k - i >= 25:
-                runs.append((k - i, i))
+                words_ = src[i:k + 4]
+                cov["runs"].append({"n": k - i, "words": words_,
+                                    "pages": Counter(first + p for p in pg[i:k + 4])})
             i = k
         else:
             i += 1
-    runs.sort(reverse=True)
-    for n, i in runs[:8]:
-        print("    missing run of %d words: %s ..." % (n, " ".join(src[i:i + 18])))
-    return runs
+    cov["runs"].sort(key=lambda r: -r["n"])
+    if report:
+        print_coverage(cov)
+    return cov
+
+
+def print_coverage(cov):
+    print("  coverage: %.1f%% of the %d words in the %s reached the page" % (
+        100.0 * cov["hit"] / max(1, cov["n"]), cov["n"], cov["label"]))
+    for r in cov["runs"][:8]:
+        print("    missing run of %d words: %s ..." % (r["n"], " ".join(r["words"][:18])))
+
+
+FRONT_MATTER_WORDS = {"copyright", "https", "http", "doi", "licence", "license", "licensed", "corresponding", "permissions"}
+
+
+def weak_pages(cov, limit=10):
+    """PDF pages where a long run of ordinary prose went missing: the pages worth
+    showing as printed. Runs of numbers and labels (charts, tables) don't count,
+    and nor do the licence and contact lines the conversion drops on purpose."""
+    known = word_list()
+    missing = Counter()
+    for r in cov["runs"]:
+        ws = r["words"]
+        prose = sum(1 for w in ws if w.isalpha() and len(w) > 2 and (not known or w in known))
+        if prose < 0.4 * len(ws):  # sentences score about 0.5 or more; tables and charts 0.25 or less
+            continue
+        hits = sum(1 for w in ws if w in FRONT_MATTER_WORDS)
+        if hits and (min(r["pages"]) <= cov["first"] + 1 or 30 * hits >= len(ws)):
+            continue  # licence and contact blocks: on the opening pages, or dense with these words. A page footer adds one or two.
+        for p, n in r["pages"].items():
+            if n >= 10:
+                missing[p] += n
+    return sorted(p for p, _ in missing.most_common(limit))
+
+
+def page_image(pdf, page):
+    """The whole printed page as a JPEG, for showing where text may be missing."""
+    WORK.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=str(WORK)) as tmp:
+        root = Path(tmp) / "page"
+        try:
+            r = subprocess.run(["pdftoppm", "-f", str(page), "-l", str(page), "-scale-to", "1400", "-jpeg",
+                                "-jpegopt", "quality=75", "-singlefile", "--", str(pdf), str(root)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        except subprocess.TimeoutExpired:
+            return None
+        out = Path(tmp) / "page.jpg"
+        return out.read_bytes() if r.returncode == 0 and out.exists() else None
+
+
+def finish_page(doc, meta, pages=None, list_line=None, list_pos=None):
+    """Render the page, check its coverage, and render again with the printed
+    page offered wherever prose went missing. Returns (html, words, coverage)."""
+    page, total = render(doc, list_line, list_pos)
+    cov = coverage(page, meta, pages, report=False)
+    if cov and doc.pdf and shutil.which("pdftoppm") and any(b["t"] == "page" for b in doc.blocks):
+        for p in weak_pages(cov):
+            u = data_uri(page_image(doc.pdf, p) or b"")
+            if u:
+                doc.page_images[p] = u
+        if doc.page_images:
+            page, total = render(doc, list_line, list_pos)
+    return page, total, cov
+
+
+def report_coverage(cov, doc):
+    if cov is None:
+        print("  coverage: no source text to compare against")
+        return
+    print_coverage(cov)
+    if doc.page_images:
+        print("  original page offered for PDF pages %s, where text may be missing" % ", ".join(str(p) for p in sorted(doc.page_images)))
 
 
 # --------------------------------------------------------------------------
@@ -2563,7 +2681,7 @@ def cmd_standalone(a):
     if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not ours)):
         raise ReaderError("%s already holds other files; choose an empty folder with -o" % out)
     route, doc = take_route(a.route, meta, d, pdf, a.pages)
-    page, total = render(doc)
+    page, total, cov = finish_page(doc, doc.meta, a.pages)
     out.mkdir(parents=True, exist_ok=True)
     write_assets(out)
     if route == "pdf":

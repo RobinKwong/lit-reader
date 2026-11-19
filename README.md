@@ -111,7 +111,7 @@ coverage: 95.6% of the 5438 words in the PDF's text reached the page
   missing run of 58 words: the proportion of repeated layer 0 0 20 0 15 ...
 ```
 
-A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original.
+A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original. For a PDF, the reading copy then offers a "Show the original page" button at that page, and the build lists the pages it flagged.
 
 Pages built from arXiv HTML or a PDF are compared with the PDF's text, which needs poppler. Without it, arXiv pages still build but skip the check. Pages built from Europe PMC are compared with the article's XML.
 
