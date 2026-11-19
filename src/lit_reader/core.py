@@ -11,7 +11,7 @@ reads store character offsets into it. Sources fetched for reading live in
 ~/.cache/lit-reader/src/<slug>/.
 
 Routes, best first:
-  arxiv   arXiv's own HTML (LaTeXML): real headings, linked citations.
+  arxiv   arXiv's own HTML (LaTeXML), or ar5iv's when arXiv has none: real headings, linked citations.
   jats    Europe PMC full-text XML (JATS): the same, for PMC papers.
   pdf     Docling's JSON from the cached PDF, with figures and tables cropped
           from the PDF page by pdftoppm. Run Docling first (see `pdf-convert`).
@@ -92,7 +92,7 @@ UA = "lit-reader/%s (offline reading tool)" % __version__
 
 
 class ReaderError(Exception):
-    pass
+    status = None  # the HTTP status, when a server answered with an error
 
 
 def read_settings(path):
@@ -820,7 +820,9 @@ def http_get(url, allowed_hosts):
                 return r.read(), r.headers.get("Content-Type", "")
         except urllib.error.HTTPError as e:
             if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
-                raise ReaderError("could not fetch %s: %s" % (url, e))
+                err = ReaderError("could not fetch %s: %s" % (url, e))
+                err.status = e.code
+                raise err
             time.sleep(2 * (attempt + 1))  # a busy service often answers on the next try
         except (urllib.error.URLError, OSError) as e:
             raise ReaderError("could not fetch %s: %s" % (url, e))
@@ -843,12 +845,34 @@ def data_uri(data):
     return "data:%s;base64,%s" % (k, base64.b64encode(data).decode())
 
 
-def fetch_arxiv(aid, d):
+AR5IV = "ar5iv.labs.arxiv.org"
+
+
+def fetch_arxiv(aid, d, sources=("arxiv", "ar5iv")):
+    """arXiv's own HTML, or ar5iv's conversion when arXiv has none. ar5iv
+    sends a paper it lacks back to arxiv.org/abs, so that host is allowed too."""
     d.mkdir(parents=True, exist_ok=True)
-    url = "https://arxiv.org/html/%s" % urllib.parse.quote(aid, safe="/.")
-    body, ctype = http_get(url, {"arxiv.org"})
-    if b"ltx_document" not in body:
-        raise ReaderError("arXiv has no HTML version of %s (got %s)" % (aid, ctype))
+    q = urllib.parse.quote(aid, safe="/.")
+    body = None
+    tries = {"arxiv": ("https://arxiv.org/html/%s" % q, {"arxiv.org"}),
+             "ar5iv": ("https://%s/html/%s" % (AR5IV, q), {AR5IV, "arxiv.org"})}
+    for url, hosts in (tries[s_] for s_ in sources):
+        try:
+            got, _ = http_get(url, hosts)
+        except ReaderError as e:
+            if e.status != 404:
+                raise  # an outage or a network error is reported, not mistaken for "no HTML version"
+            continue
+        if b"ltx_document" in got:
+            body = got
+            break
+    if body is None:
+        err = ReaderError("%s of %s" % ("neither arXiv nor ar5iv has an HTML version" if len(sources) > 1 else
+                                        "%s has no HTML version" % ("arXiv" if sources[0] == "arxiv" else "ar5iv"), aid))
+        err.no_html = True
+        raise err
+    if AR5IV in url:
+        print("  arXiv has no HTML version of %s, so using ar5iv's conversion" % aid)
     (d / "arxiv.html").write_bytes(body)
     (d / "arxiv.url").write_text(url)
     root = parse_html(body.decode("utf-8", "replace"))
@@ -864,7 +888,7 @@ def fetch_arxiv(aid, d):
         if target.exists():
             continue
         try:
-            data, _ = http_get(urllib.parse.urljoin(url, src), {"arxiv.org"})
+            data, _ = http_get(urllib.parse.urljoin(url, src), {urllib.parse.urlparse(url).netloc})
         except (ReaderError, ValueError) as e:
             print("  image failed: %s (%s)" % (src, e))
             continue
@@ -993,7 +1017,10 @@ def arxiv_doc(meta, d):
     url = (d / "arxiv.url").read_text().strip() if (d / "arxiv.url").exists() else ""
     doc.meta["url"] = url
     doc.meta["kicker"] = "arXiv " + (meta.get("arxiv") or "")
-    doc.source = "Text from arXiv's HTML version (%s), which arXiv labels experimental." % url
+    if AR5IV in url:
+        doc.source = "Text from ar5iv (%s), arXiv Labs' HTML conversion, because arXiv has no HTML version of this paper." % url
+    else:
+        doc.source = "Text from arXiv's HTML version (%s), which arXiv labels experimental." % url
     ix = ArxivInline(doc)
     imgdir = d / "img"
     doc.pdf = source_pdf(meta)
@@ -2466,20 +2493,23 @@ def arxiv_pdf(aid, d):
 def take_route(want, meta, d, pdf, pages):
     """A local PDF is used as given, because it may be a particular version of
     the paper. Otherwise, or with --route online, the best source comes first:
-    arXiv HTML, then Europe PMC XML, then the PDF."""
+    arXiv HTML, then Europe PMC XML, then ar5iv's conversion, then the PDF."""
     tried = []
+    arxiv_has_none = False  # ar5iv is tried only when arXiv answered that it has no HTML, never after an outage
     if want == "auto" and pdf is not None:
         order = ["pdf"]
         if meta.get("arxiv") or meta.get("doi"):
             print("  using your PDF. To try the online version of this paper instead, add --route online")
     elif want in ("auto", "online"):
-        order = ["arxiv", "jats", "pdf"]
+        order = ["arxiv", "jats", "ar5iv", "pdf"]  # the publisher's XML is a better copy than ar5iv's older conversion
     else:
         order = [want]
     for route in order:
         try:
-            if route == "arxiv" and meta.get("arxiv"):
-                fetch_arxiv(meta["arxiv"], d)
+            if route == "ar5iv" and not arxiv_has_none:
+                continue
+            if route in ("arxiv", "ar5iv") and meta.get("arxiv"):
+                fetch_arxiv(meta["arxiv"], d, ("arxiv", "ar5iv") if want == "arxiv" else (route,))
                 try:
                     copy = pdf or arxiv_pdf(meta["arxiv"], d)
                     meta["text_path"], meta["text_label"] = pdf_to_text(copy, d / "paper.txt"), "PDF's text"
@@ -2508,6 +2538,7 @@ def take_route(want, meta, d, pdf, pages):
                     run_docling(pdf, d, pages)
                 return "pdf", docling_doc(meta, d, pages)
         except ReaderError as e:
+            arxiv_has_none = arxiv_has_none or (route == "arxiv" and getattr(e, "no_html", False))
             tried.append("%s: %s" % (route, e))
             print("  %s route unavailable: %s" % (route, e))
     if want not in ("auto", "online") and not tried:

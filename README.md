@@ -64,7 +64,7 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 
 **If you give a PDF, lit-reader reads that PDF.** Your file may be a particular version of the paper, such as an accepted manuscript, so it is never replaced by an online copy without your asking.
 
-**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then arXiv's PDF.
+**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then arXiv's PDF. When arXiv has no HTML version of a paper, lit-reader tries [ar5iv](https://ar5iv.labs.arxiv.org/), arXiv Labs' earlier conversion, before the PDF.
 
 To change this, use `--route`:
 
@@ -84,7 +84,7 @@ On every route, lit-reader sends an arXiv ID or DOI found on a PDF's first page 
 
 | Source | Best for | What to expect |
 |---|---|---|
-| arXiv HTML | Recent arXiv papers | Real headings, linked citations and live tables. arXiv labels this format experimental, and some figures don't convert. The page links to the PDF for those. |
+| arXiv HTML | arXiv papers | Real headings, linked citations and live tables. arXiv labels this format experimental, and some figures don't convert. The page links to the PDF for those. ar5iv's conversions can stop partway, which the coverage check shows. |
 | Europe PMC XML | Open-access papers in Europe PMC | Real headings, linked citations and the publisher's figures. |
 | PDF | Everything else | Text converted by Docling, with the original page numbers in the margin. Figures and tables are images cropped from the page. |
 
