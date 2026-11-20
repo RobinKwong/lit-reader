@@ -29,6 +29,7 @@ BAD_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif"}
 
 CSS = """body { margin: 0 4%; line-height: 1.5; }
+body, p, li, h1, h2, h3, h4, td, th, figcaption { -webkit-hyphens: manual; -epub-hyphens: manual; adobe-hyphenate: none; hyphens: manual; }
 h1 { font-size: 1.5em; line-height: 1.25; margin: 1em 0 .5em; }
 h2 { font-size: 1.25em; margin: 1.6em 0 .5em; }
 h3 { font-size: 1.1em; margin: 1.3em 0 .4em; }
@@ -38,6 +39,7 @@ p.cont { margin-top: -.4em; }
 .kicker, .meta, .source, .why { font-size: .85em; }
 .authors { font-weight: bold; }
 div.pg { font-size: .75em; color: #777; text-align: right; margin: .2em 0; }
+div.table-text { font-size: .85em; margin: 0 0 1.2em; }
 figure { margin: 1.2em 0; }
 figure img, .eq img { max-width: 100%; height: auto; }
 figcaption { font-size: .85em; margin-top: .4em; }
@@ -158,6 +160,10 @@ class Writer(object):
                 return ""
             return ('<figure><img src="%s" alt="%s"/><figcaption>The original %s, as printed. Some text on this page '
                     'may not have come through.</figcaption></figure>') % (src, attr("The original " + name), esc(name))
+        if t == "details" and "table-text" in c:  # keep its label: the summary is dropped like every summary
+            s = n.find(lambda x: x.tag == "summary")
+            return '<div class="table-text"><p><strong>%s</strong></p>%s</div>' % (
+                esc(s.text().strip() if s is not None else "Table as text"), self.kids(n))
         if t == "a":
             if "pdf-link" in c:
                 return ""

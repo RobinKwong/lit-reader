@@ -50,6 +50,7 @@ arguments, never through a shell.
 import argparse
 import base64
 import datetime
+import functools
 import hashlib
 import html
 import io
@@ -478,12 +479,16 @@ def heading_text(h):
 
 
 def pdf_href(doc):
-    """Standalone pages link to their own copy of the PDF, so no local path is written into the page."""
-    return doc.meta.get("pdf_href") or doc.pdf.as_uri()
+    """Standalone pages link to their own copy of the PDF, so no local path is written into the page.
+    A single-file copy travels without the PDF, so it links only to a PDF online (None otherwise)."""
+    href = doc.meta.get("pdf_href") or doc.pdf.as_uri()
+    if doc.meta.get("single_file") and not href.startswith(("https://", "http://")):
+        return None
+    return href
 
 
 def pdf_link(doc, page):
-    if not doc.pdf or not page:
+    if not doc.pdf or not page or not pdf_href(doc):
         return ""
     return '<a class="pdf-link" href="%s#page=%d" target="_blank" rel="noopener">open page %d of the PDF</a>' % (attr(pdf_href(doc)), page, page)
 
@@ -579,8 +584,14 @@ def render(doc, list_line=None, list_pos=None):
                 cap = "<figcaption>%s%s%s</figcaption>" % (
                     '<span class="label">%s</span>' % esc(b["label"]) if b.get("label") else "",
                     b.get("caption") or "", (" " + link) if link else "")
+            after = ""
+            if b.get("table_text"):  # Docling's reading of a table shown as an image; after the figure, so the caption stays its last child
+                after = ('<details class="table-text"><summary>%s as text</summary>'
+                        '<p class="orig-note">From the conversion and not checked by hand: compare it with the image above before relying on it.</p>'
+                        '<div class="tablewrap" role="region" tabindex="0" aria-label="%s as text">%s</div></details>') % (
+                    esc((b.get("label") or "Table").rstrip(":. ")), attr((b.get("label") or "Table").rstrip(":. ")), b["table_text"])
             fid = ' data-fig="%s"' % attr(b["id"]) if b.get("id") else ""
-            out.append('<figure %s%s>%s%s</figure>' % (common.replace('id="b%d"' % bid, 'id="%s"' % (b.get("id") or "b%d" % bid)), fid, "".join(parts), cap))
+            out.append('<figure %s%s>%s%s</figure>%s' % (common.replace('id="b%d"' % bid, 'id="%s"' % (b.get("id") or "b%d" % bid)), fid, "".join(parts), cap, after))
 
     if doc.page_images:
         out.append(original_pages(None))
@@ -606,22 +617,24 @@ def render(doc, list_line=None, list_pos=None):
         meta_bits.append('<a href="https://doi.org/%s" target="_blank" rel="noopener">doi:%s</a>' % (attr(doi), esc(doi)))
     elif m.get("url"):
         meta_bits.append('<a href="%s" target="_blank" rel="noopener">%s</a>' % (attr(m["url"]), esc(m["url"])))
-    meta_bits.append("about %d min of reading in the main text" % max(1, round(main_words(doc) / float(WPM))))
+    main_mins = max(1, round(main_words(doc) / float(WPM)))
+    meta_bits.append("about %d min of reading in the main text" % main_mins)
     why = ""
     if list_line:
         why = '<div class="why"><b>%s</b> %s</div>' % (esc(list_pos or "On your list"), list_line)
 
-    alone = bool(m.get("standalone"))
+    alone = bool(m.get("standalone") or m.get("single_file"))  # a single file has no list of papers beside it
     back = '<ol class="back"><li><a href="#top">↑ Back to the start</a></li>%s</ol>' % (
         "" if alone else '<li><a href="index.html">← All papers</a></li>')
     toc_html = '<div class="toc-head">Contents</div><ol>%s</ol>%s' % ("".join(
         '<li class="l%d"><a href="#%s"><span>%s</span><span class="mins">%s</span></a></li>' % (
-            l, h, esc(t), ('<span aria-hidden="true">%d′</span><span class="sr">%d min</span>' % (mins, mins)) if mins else "")
+            l, h, esc(t), ("%d min" % mins) if mins else "")
         for l, h, t, mins in toc), back)
 
     title_text = strip_tags(m.get("title_html") or esc(m.get("title", ""))).strip()
     page = PAGE.format(
         title=esc(title_text), pid=attr(m.get("pid", "")),
+        where="About %d min of reading" % main_mins,  # the script keeps this up to date as you read
         cite=attr(short_citation(m)), reference=attr(full_reference(m, title_text)),
         kicker=esc(" · ".join(x for x in [m.get("kicker")] if x) or "Reading copy"),
         title_html=m.get("title_html") or esc(m.get("title", "")),
@@ -683,7 +696,7 @@ def chunked(h, target=70):
 
 
 def pdf_anchor(doc, b):
-    if doc.pdf and b.get("pdf"):
+    if doc.pdf and b.get("pdf") and pdf_href(doc):
         return '<a href="%s#page=%d" target="_blank" rel="noopener" title="Printed page %s. Opens page %d of the PDF.">p. %s</a>' % (
             attr(pdf_href(doc)), b["pdf"], attr(str(b["label"])), b["pdf"], esc(str(b["label"])))
     return None
@@ -724,7 +737,7 @@ PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settin
   <div class="row" role="group" aria-label="Size"><span>Size</span><span class="seg">
     <button id="size-down" aria-label="A− smaller text">A−</button><span id="size-now" aria-live="polite" style="padding:.2rem .3rem">20px</span>
     <button id="size-up" aria-label="A+ larger text">A+</button></span></div>
-  <div class="row" role="group" aria-label="Line length"><span>Line length</span><span class="seg">
+  <div class="row row-width" role="group" aria-label="Line length"><span>Line length</span><span class="seg">
     <button data-pref="width" data-val="narrow">Narrow</button><button data-pref="width" data-val="medium">Medium</button>
     <button data-pref="width" data-val="wide">Wide</button></span></div>
   <div class="row" role="group" aria-label="Paragraphs"><span>Paragraphs</span><span class="seg">
@@ -752,11 +765,12 @@ PAGE = """<!doctype html>
 <body data-pid="{pid}" data-cite="{cite}" data-reference="{reference}">
 <a class="skip" href="#text-start">Skip to the text</a>
 <div class="bar">
-  <button id="toc-toggle" type="button" aria-expanded="false" aria-controls="toc">☰ Contents</button>
-  <span class="where" id="where"></span>
+  <button id="toc-toggle" type="button" aria-expanded="false" aria-controls="toc" aria-label="Contents"><span aria-hidden="true">☰</span><span class="lbl"> Contents</span></button>
+  <a class="nojs-toc" href="#toc" aria-label="Contents"><span aria-hidden="true">☰</span><span class="lbl"> Contents</span></a>
+  <span class="where" id="where">{where}</span>
   {all_link}
   <button id="clips" type="button" aria-expanded="false" aria-controls="clips-panel">Quotes <span id="clip-count"></span></button>
-  <button id="aa" type="button" aria-label="Reading settings" aria-expanded="false" aria-controls="panel">Aa</button>
+  <button id="aa" type="button" aria-label="Aa, reading settings" aria-expanded="false" aria-controls="panel">Aa</button>
 </div>
 <div class="panel clips-panel" id="clips-panel" role="group" aria-label="Saved quotes" hidden></div>
 <div class="progress" id="progress"></div>
@@ -1680,6 +1694,53 @@ def dehyphen(a, b):
     return a + b
 
 
+def docling_table_html(item):
+    """Docling's reading of a table as an HTML table, or "". It goes under the
+    table's image, marked unchecked, so screen readers and phones get the data."""
+    data = item.get("data") or {}
+    cells = [c for c in data.get("table_cells") or [] if isinstance(c, dict)]
+    try:  # from the cells themselves too, so a missing or low count can't empty or cut the table
+        nrows = max([data.get("num_rows") or 0] + [int(c.get("end_row_offset_idx") or 0) for c in cells])
+        ncols = max([data.get("num_cols") or 0] + [int(c.get("end_col_offset_idx") or 0) for c in cells])
+    except (TypeError, ValueError):
+        return ""
+    if nrows < 2 or not any((c.get("text") or "").strip() for c in cells):
+        return ""
+    if ncols < 1:
+        return ""
+    starts, covered = {}, set()  # Docling leaves empty cells out, so each cell is placed by its offsets
+    for c in cells:
+        try:
+            r0, r1 = int(c["start_row_offset_idx"]), int(c["end_row_offset_idx"])
+            c0, c1 = int(c["start_col_offset_idx"]), int(c["end_col_offset_idx"])
+        except (KeyError, TypeError, ValueError):
+            return ""  # not the shape we know: offer nothing rather than a garbled table
+        r1, c1 = min(max(r1, r0 + 1), nrows), min(max(c1, c0 + 1), ncols)
+        span = set((r, k) for r in range(r0, r1) for k in range(c0, c1))
+        if not (0 <= r0 < nrows and 0 <= c0 < ncols) or span & covered:
+            continue  # overlaps a cell already placed: keep the first, so every row keeps its width
+        starts[(r0, c0)] = (r1 - r0, c1 - c0, c)
+        covered |= span
+    out = []
+    for r in range(nrows):
+        tds, k = [], 0
+        while k < ncols:
+            if (r, k) in starts:
+                rs, cs, c = starts[(r, k)]
+                head = c.get("column_header") or c.get("row_header")
+                tag = "th" if head else "td"
+                scope = (' scope="col"' if c.get("column_header") else ' scope="row"') if head else ""  # col and row already cover every column or row spanned
+                span = (' rowspan="%d"' % rs if rs > 1 else "") + (' colspan="%d"' % cs if cs > 1 else "")
+                tds.append("<%s%s%s>%s</%s>" % (tag, scope, span, esc((c.get("text") or "").strip()), tag))
+                k += cs
+            else:
+                if (r, k) not in covered:
+                    tds.append("<td></td>")  # an empty cell, or one Docling didn't read
+                k += 1
+        out.append("<tr>%s</tr>" % "".join(tds))
+    return '<table class="data">%s</table>' % "".join(out)
+
+
 def docling_doc(meta, d, pages=None):
     js = sorted((d / "docling").glob("*.json"))
     if not js:
@@ -1845,13 +1906,15 @@ def docling_doc(meta, d, pages=None):
             if mm:
                 lab, cap_text = mm.group(1), mm.group(2)
             imgs = []
+            table_text = docling_table_html(item) if kind == "tables" else ""
             if pnum and doc.pdf:
                 bb = prov[0]["bbox"]
                 box = float_box.get(item.get("self_ref")) or docling_box(bb, page_h.get(pnum, 792))
                 png = crop_png(doc.pdf, pnum + offset, box, page_h.get(pnum, 792))
                 u = data_uri(png) if png else None
                 if u:
-                    imgs.append((u, "%s, shown as an image" % (lab.rstrip(".: ") or ("Table" if kind == "tables" else "Figure"))))
+                    alt = "%s, shown as an image" % (lab.rstrip(".: ") or ("Table" if kind == "tables" else "Figure"))
+                    imgs.append((u, alt + (". The table as text follows it" if table_text else "")))
             if not imgs and not cap_text:
                 continue
             bb = prov[0].get("bbox") or {}
@@ -1871,7 +1934,7 @@ def docling_doc(meta, d, pages=None):
             flush()
             page_marker(pnum)
             doc.add(t="fig", kind="table" if kind == "tables" else "figure", label=lab, caption=caption,
-                    imgs=imgs, table="", page=(pnum + offset) if pnum else None)
+                    imgs=imgs, table="", table_text=table_text if imgs else "", page=(pnum + offset) if pnum else None)
             pending = held
             continue
         if label == "formula" and not text:  # Docling found an equation but couldn't read it: show it as printed
@@ -2181,7 +2244,7 @@ def coverage(page_html, meta, pages=None, report=True):
     pg = []
     src = tokens(raw, pg)
     body = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", page_html, flags=re.S)
-    body = re.sub(r"<details class=\"orig-page\">.*?</details>", " ", body, flags=re.S)
+    body = re.sub(r"<details class=\"(?:orig-page|table-text)\">.*?</details>", " ", body, flags=re.S)  # aids, not the reading text
     body = re.sub(r'<img[^>]*>', " ", body)
     got = tokens(strip_tags(body))
     cs, cg = Counter(src), Counter(got)
@@ -2281,21 +2344,67 @@ def report_coverage(cov, doc):
 # Commands
 # --------------------------------------------------------------------------
 
-def write_assets(out=None):
-    a = (out or OUT) / "assets"
-    a.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(str(HERE / "reader.css"), str(a / "reader.css"))
-    shutil.copyfile(str(HERE / "reader.js"), str(a / "reader.js"))
+@functools.lru_cache(maxsize=1)  # the same fonts for every page in a build
+def fonts_css():
     faces = []
     for style, f in (("normal", "literata-opsz-normal.woff2"), ("italic", "literata-opsz-italic.woff2")):
         p = FONTS / f
         if p.exists():
             faces.append("@font-face{font-family:'Literata';font-style:%s;font-weight:200 900;font-display:swap;"
                          "src:url(data:font/woff2;base64,%s) format('woff2');}" % (style, base64.b64encode(p.read_bytes()).decode()))
-    (a / "fonts.css").write_text("/* Literata, SIL Open Font License, via @fontsource-variable/literata@5.3.0 */\n" + "\n".join(faces))
+    return "/* Literata, SIL Open Font License, via @fontsource-variable/literata@5.3.0 */\n" + "\n".join(faces)
 
 
-def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None, epub=False):
+def write_assets(out=None):
+    a = (out or OUT) / "assets"
+    a.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(str(HERE / "reader.css"), str(a / "reader.css"))
+    shutil.copyfile(str(HERE / "reader.js"), str(a / "reader.js"))
+    (a / "fonts.css").write_text(fonts_css())
+
+
+def inline_assets(page):
+    """The page with its styles, script and fonts inside it, so it works as one file.
+    The script stays allowed only by its hash, so the page still runs no other script."""
+    # Plain ASCII throughout: a file sent by email can be re-encoded on the way
+    # (Gmail turned one into Latin-1 on 19 November 2026), which garbles every
+    # accent and breaks the script's hash. Escapes survive that.
+    def js_ascii(s):  # reader.js keeps its non-ASCII inside strings, where \u escapes mean the same
+        return re.sub(r"[^\x00-\x7f]", lambda m: json.dumps(m.group())[1:-1], s)  # \uXXXX, surrogate pairs included
+    def css_ascii(s):
+        return re.sub(r"[^\x00-\x7f]", lambda m: "\\%x " % ord(m.group()), s)
+    page = page.encode("ascii", "xmlcharrefreplace").decode("ascii")
+    js = js_ascii((HERE / "reader.js").read_text(encoding="utf-8"))
+    css = css_ascii((HERE / "reader.css").read_text(encoding="utf-8"))
+    fonts = css_ascii(fonts_css())
+    for text in (js, css, fonts):
+        if re.search(r"</(script|style)", text, re.I):  # would end the inline block early
+            raise ReaderError("an asset contains a closing script or style tag and can't be inlined")
+    digest = base64.b64encode(hashlib.sha256(js.encode("utf-8")).digest()).decode()
+    swaps = [
+        ("script-src 'self' file:", "script-src 'sha256-%s'" % digest),
+        ('<link rel="stylesheet" href="assets/fonts.css">', "<style>%s</style>" % fonts),
+        ('<link rel="stylesheet" href="assets/reader.css">', "<style>%s</style>" % css),
+        ('<script src="assets/reader.js"></script>', "<script>%s</script>" % js),
+    ]
+    for old, new in swaps:
+        if page.count(old) != 1:
+            raise ReaderError("page template changed; can't inline %s" % old)
+        page = page.replace(old, new)
+    return page
+
+
+def single_file_copy(doc, list_line=None, list_pos=None):
+    """A copy of the page that needs nothing beside it, to send to a phone."""
+    doc.meta["single_file"] = True
+    try:
+        page, _ = render(doc, list_line, list_pos)
+    finally:
+        doc.meta.pop("single_file", None)
+    return inline_assets(page)
+
+
+def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None, epub=False, single=False):
     meta = ledger_meta(ledger, pid)
     d = SRC / slug(meta)
     if route == "arxiv":
@@ -2317,6 +2426,8 @@ def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part
     report_coverage(cov, doc)
     if epub:
         write_epub_copy(page, meta, OUT / (slug(meta) + ".epub"))
+    if single:
+        write_single_copy(doc, OUT / "single-file" / name, line, pos)
     return name
 
 
@@ -2336,7 +2447,7 @@ def cmd_build(a):
                 a.list_n = a.list_n or it.get("n")
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
-    build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part, a.epub)
+    build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part, a.epub, a.single_file)
     if LIST_FILE.exists():
         cmd_index(a)
 
@@ -2348,7 +2459,7 @@ def cmd_all(a):
             if it.get("route"):
                 try:
                     build_one(it["pid"], it["ledger"], it["route"], it.get("n") if L["name"] == "Must-read" else None,
-                              len(L["items"]), it.get("pages"), it.get("part"), a.epub)
+                              len(L["items"]), it.get("pages"), it.get("part"), a.epub, a.single_file)
                 except ReaderError as e:
                     print("skipped %s: %s" % (it["pid"], e))
     cmd_index(a)
@@ -2403,7 +2514,7 @@ INDEX = """<!doctype html>
 <link rel="stylesheet" href="assets/reader.css">
 </head>
 <body class="index">
-<div class="bar"><span class="where">{bar}</span><button id="aa" type="button" aria-label="Reading settings" aria-expanded="false" aria-controls="panel">Aa</button></div>
+<div class="bar"><span class="where">{bar}</span><button id="aa" type="button" aria-label="Aa, reading settings" aria-expanded="false" aria-controls="panel">Aa</button></div>
 {panel}
 <div class="layout"><main>
 <header class="paper"><div class="kicker">{kicker}</div><h1>Reading list</h1>
@@ -2414,6 +2525,29 @@ INDEX = """<!doctype html>
 </body>
 </html>
 """
+
+# Pages also have to work where no script runs: an iPhone's preview of an email
+# attachment runs none. This small script marks the page as scripted before it
+# is drawn, so the styles can offer plain links instead of dead buttons when it
+# doesn't run. It takes the mark back if reader.js never ran (a page opened
+# without its assets folder), since the buttons would then be dead too.
+JS_FLAG = ('document.documentElement.classList.add("js");'
+           'document.addEventListener("DOMContentLoaded",function(){'
+           'if(!window.litReaderRan)document.documentElement.classList.remove("js")})')
+
+
+def with_js_flag(tpl):
+    digest = base64.b64encode(hashlib.sha256(JS_FLAG.encode("ascii")).digest()).decode()
+    for old, new in (("script-src 'self' file:", "script-src 'self' file: 'sha256-%s'" % digest),
+                     ("<title>", "<script>%s</script>\n<title>" % JS_FLAG.replace("{", "{{").replace("}", "}}"))):  # the templates go through str.format
+        if tpl.count(old) != 1:  # not an assert: python -O would drop it, and pages would lose their script
+            raise RuntimeError("page template changed; can't add the script flag at %r" % old)
+        tpl = tpl.replace(old, new)
+    return tpl
+
+
+PAGE = with_js_flag(PAGE)
+INDEX = with_js_flag(INDEX)
 
 
 # --------------------------------------------------------------------------
@@ -2739,6 +2873,8 @@ def cmd_standalone(a):
     report_coverage(cov, doc)
     if a.epub:
         write_epub_copy(page, doc.meta, out / (name + ".epub"))
+    if a.single_file:
+        write_single_copy(doc, out / (name + ".html"))
 
 
 LEDGER_COMMANDS = ("fetch", "pdf-convert", "build", "index", "all")
@@ -2754,6 +2890,20 @@ def write_epub_copy(page, meta, path):
     print("wrote %s" % path)
 
 
+def write_single_copy(doc, path, list_line=None, list_pos=None):
+    try:
+        page = single_file_copy(doc, list_line, list_pos)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(page, encoding="utf-8")
+    except Exception as e:  # as with the EPUB: the main copy is already written, and one failure shouldn't stop a batch
+        print("  single-file copy not written (%s): %s" % (type(e).__name__, e))
+        return
+    print("wrote %s (one file, %.1f MB, for a phone)" % (path, len(page.encode("utf-8")) / 1e6))
+
+
+SINGLE_HELP = "also write a copy with everything inside one HTML file, to send to a phone"
+
+
 def standalone_parser():
     ap = argparse.ArgumentParser(prog="lit-reader", description="Turn one academic paper into an offline HTML reading copy.",
                                  epilog="Ledger commands: %s (each has its own --help)." % ", ".join(LEDGER_COMMANDS))
@@ -2765,6 +2915,7 @@ def standalone_parser():
                          "online prefers arXiv or Europe PMC even when you supply a PDF")
     ap.add_argument("--pages", help="PDF route only: convert these pages, for example 12-30")
     ap.add_argument("--epub", action="store_true", help="also write an EPUB copy for an e-reader")
+    ap.add_argument("--single-file", action="store_true", help=SINGLE_HELP)
     return ap
 
 
@@ -2795,9 +2946,11 @@ def main(argv=None):
     b.add_argument("--list-n", type=int)
     b.add_argument("--pages")
     b.add_argument("--epub", action="store_true")
+    b.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")
     sub.add_parser("index")
     al = sub.add_parser("all")
     al.add_argument("--epub", action="store_true")
+    al.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")
     a = ap.parse_args(argv)
     try:
         apply_settings()

@@ -14,12 +14,13 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 
 - **Text set for reading.** By default, lines run to about 65 characters, and lit-reader adds no automatic hyphenation. Long paragraphs are split at sentence ends, and an "As published" setting restores the original breaks.
 - **Citations that open in place.** Click a citation to read the reference in a card without losing your place. Footnotes sit in the margin, except in papers built from a PDF, where they follow the paragraph.
-- **A sense of where you are.** The contents sidebar shows the minutes in each section, the top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
+- **A sense of where you are.** The contents sidebar shows the minutes in each section, and the Contents button hides it when you want only the text. The top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
 - **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Page numbers come only from papers built from a PDF.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
-- **A copy for your e-reader.** Add `--epub` to also get an EPUB, with its page list and linked notes, to send to a Kindle or another e-reader.
+- **A copy for your e-reader or iPhone.** Add `--epub` to also get an EPUB, with its page list and linked notes, to send to a Kindle or open in Apple Books. On an iPhone, this is the copy to read: see [Reading on a phone](#reading-on-a-phone).
+- **Pages that work on a phone.** On a phone, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen at a size you can read. Add `--single-file` to also get the reading copy as one HTML file, with nothing beside it, to send to a phone.
 
 ## Install
 
@@ -62,6 +63,16 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `--route ROUTE` | Chooses the source, as described in the next section. |
 | `--pages A-B` | Converts only these pages of a PDF, for example `--pages 12-30`. |
 | `--epub` | Also writes an EPUB copy into the same folder. |
+| `--single-file` | Also writes `<slug>.html` into the same folder: the same reading copy with its styles, script and fonts inside it, so the one file works on its own. It leaves out links to a local PDF, which wouldn't travel with it. |
+
+## Reading on a phone
+
+The reading copies lay out for a phone screen, but how you get one onto a phone matters, because a phone's preview of an attachment may not run the page's script.
+
+- **iPhone:** use the EPUB. Open the attachment and choose Books from the share sheet. Apple Books gives you its own contents, footnote pop-ups, font settings and highlights. A single HTML file opened from the Gmail app on an iPhone shows the text, but the preview runs no script and can't follow links within the page, so the contents, citations and settings don't respond.
+- **Android, or a laptop:** a `--single-file` copy opened in a browser works like the folder copy.
+
+Where no script runs, a single file still shows the text, its time to read, footnotes under their paragraphs and each table's text version, and it hides the buttons that can't work.
 
 ## Which source is used
 
@@ -99,11 +110,11 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **DOIs:** a DOI only works when arXiv or Europe PMC has the full text openly available. For a book or a paywalled paper, supply the PDF.
 - **Headings:** the contents sidebar depends on headings that look different from the body text. A plainly typeset manuscript may come through as one long section.
 - **Scanned PDFs:** Docling recognises the text, but the coverage check can't run because the PDF has no text to compare against.
-- **Figures and tables as images:** in PDFs, and in some Europe PMC papers, a screen reader can reach a table's caption but not its data.
+- **Figures and tables as images:** under each table in a PDF, a closed "as text" section holds Docling's reading of the table, for screen readers and small screens. It hasn't been checked by hand, and the page says so. In some Europe PMC papers, a screen reader can reach a table's caption but not its data. A chart's only description is its caption.
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Equations:** arXiv pages keep real maths. Europe PMC pages use the article's maths if it has any, and otherwise its image of the equation or its TeX source. In PDFs, an equation Docling can read appears as plain text, so check it against the original. One it can't read appears as an image of the printed equation.
-- **Screens:** lit-reader is designed for reading on a laptop or desktop. Pages adapt to narrow screens, but they haven't been tested on a real phone, and each page needs the `assets` folder beside it.
-- **E-readers:** EPUB copies pass structural checks but haven't been tested on a Kindle or another e-reader yet. How maths and wide tables look depends on the e-reader.
+- **Screens:** lit-reader is designed for reading on a laptop or desktop, and pages also lay out for phones. The phone layout has been checked in a desktop browser's phone emulation; on a real phone, only a single file in the Gmail app's iPhone preview has been tried. A page needs the `assets` folder beside it unless you build it with `--single-file`. Each browser keeps its own quotes and reading position: a phone won't have what you saved on a laptop.
+- **E-readers:** EPUB copies pass structural checks and open in Apple Books on an iPhone, but haven't been tested on a Kindle yet. How maths and wide tables look depends on the e-reader.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
 
 ## Checking a reading copy
@@ -132,8 +143,39 @@ lit-reader uses no AI service, analytics or account. Conversion happens on your 
 
 ## Copyright
 
-Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one. The same applies to EPUB copies.
+Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one. A single file or an EPUB copy doesn't include the PDF, but it does include the paper's full text and figures, so the same care applies.
 
 ## Licence
 
 lit-reader is released under the [MIT licence](LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](src/lit_reader/fonts/OFL.txt).
+
+## Changelog
+
+### v1.1
+
+New sources and checks:
+
+- **ar5iv fallback.** When arXiv has no HTML version of a paper, lit-reader uses ar5iv's conversion before falling back to the PDF.
+- **The printed page where text went missing.** Where a PDF page lost ordinary sentences in conversion, the reading copy offers a "Show the original page" button with the page as printed.
+
+New ways to read:
+
+- **Saved quotes.** Select a passage and save it with its author, year and page, then copy it or download all your quotes as Markdown.
+- **EPUB copies.** `--epub` writes an EPUB alongside the reading copy, for Apple Books or a Kindle.
+- **Phone layout.** Citations open in a sheet along the bottom, the contents sit in a drawer, buttons are sized for touch, and text starts at 18px rather than 20px.
+- **Single-file copies.** `--single-file` writes the reading copy as one HTML file in plain ASCII, so an email can't garble its text. It still shows its text and footnotes where no script runs.
+- **Contents you can hide.** On a laptop, the Contents button hides the sidebar without moving the text.
+- **Figures you can enlarge.** On a narrow screen, tapping a figure or table opens it full screen at full size. On a wide screen, it still widens into the margin.
+- **Tables as text.** Under each table from a PDF, a closed section holds the table's text as Docling read it, marked as unchecked, for screen readers and small screens.
+
+Smaller changes:
+
+- **Undo for a removed quote**, until the Quotes panel closes.
+- **A way back from the reference list.** "Go to reference list" leaves a "Back to where you were" button under the reference.
+- **Plainer contents.** The contents show "6 min" rather than "6′".
+- **A clearer phone bar.** The top bar on a phone says "min left in section".
+- **No hyphenation in EPUBs.** EPUB copies ask e-readers not to hyphenate, to match the reading copies.
+
+### v1.0
+
+The first public release, on 18 November 2026, first numbered 0.1.0. It turns a PDF, arXiv ID or URL, DOI or PMCID into an offline reading copy from arXiv's HTML, Europe PMC's XML or the PDF. The copy has reflowed text, a contents sidebar with the minutes in each section, citation cards, sidenotes, the printed page numbers, reading settings and a saved reading position. Each build reports how much of the source's text reached the page.

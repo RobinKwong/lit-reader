@@ -3,6 +3,7 @@
    wrapped in try/catch so the page still works when storage is blocked. */
 (function () {
   "use strict";
+  window.litReaderRan = true;  // the page's flag script checks this: without it, the no-script fallbacks show
   var WPM = 200; // academic prose; an estimate, labelled as one
   var root = document.documentElement;
   var pid = document.body.getAttribute("data-pid") || "";
@@ -17,6 +18,18 @@
   var PREF_KEY = "litreader.prefs";
   var prefs = load(PREF_KEY, {});
   var SIZES = [16, 17, 18, 19, 20, 21, 22, 24, 26];
+  var phone = window.matchMedia && matchMedia("(max-width: 600px)").matches;
+  var touch = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+  var DEFAULT_SIZE = phone ? 18 : 20;  // about 40 characters a line on a phone, rather than 35
+  var wideQuery = window.matchMedia ? matchMedia("(min-width: 981px)") : { matches: true };
+  function focusQuietly(el, byPointer) {  // focus follows a jump, but a tap or click doesn't leave a ring behind
+    el.focus({ preventScroll: true });
+    if (byPointer && document.activeElement === el) {  // only once focus has landed, or the ring could stay hidden for good
+      el.classList.add("quiet-focus");
+      el.addEventListener("blur", function () { el.classList.remove("quiet-focus"); }, { once: true });
+    }
+  }
+  function barBottom() { var b = document.querySelector(".bar"); return (b ? b.offsetHeight : 44) + 12; }  // keep clear of the top bar
   var WIDTHS = { narrow: "47ch", medium: "54ch", wide: "62ch" };
   var LHS = { tight: 1.4, normal: 1.5, loose: 1.7 };
 
@@ -27,7 +40,9 @@
     else root.removeAttribute("data-font");
     if (prefs.para === "orig") root.setAttribute("data-para", "orig");
     else root.removeAttribute("data-para");
-    root.style.setProperty("--size", (prefs.size || 20) + "px");
+    if (prefs.toc === "hidden") root.setAttribute("data-toc", "hidden");
+    else root.removeAttribute("data-toc");
+    root.style.setProperty("--size", (prefs.size || DEFAULT_SIZE) + "px");
     root.style.setProperty("--measure", WIDTHS[prefs.width || "medium"]);
     root.style.setProperty("--lh", LHS[prefs.lh || "normal"]);
     document.querySelectorAll(".panel [data-pref]").forEach(function (b) {
@@ -36,7 +51,7 @@
       b.setAttribute("aria-pressed", String(cur === v));
     });
     var sz = document.getElementById("size-now");
-    if (sz) sz.textContent = (prefs.size || 20) + "px";
+    if (sz) sz.textContent = (prefs.size || DEFAULT_SIZE) + "px";
   }
   applyPrefs();
 
@@ -55,7 +70,7 @@
       var b = e.target.closest("button"); if (!b) return;
       if (b.hasAttribute("data-pref")) prefs[b.getAttribute("data-pref")] = b.getAttribute("data-val");
       if (b.id === "size-down" || b.id === "size-up") {
-        var i = SIZES.indexOf(prefs.size || 20); if (i < 0) i = 4;
+        var i = SIZES.indexOf(prefs.size || DEFAULT_SIZE); if (i < 0) i = 4;
         i = Math.max(0, Math.min(SIZES.length - 1, i + (b.id === "size-up" ? 1 : -1)));
         prefs.size = SIZES[i];
       }
@@ -78,7 +93,8 @@
     return;
   }
 
-  /* ---------- contents drawer on narrow screens ---------- */
+  /* ---------- contents: a sidebar that can be put away on wide screens,
+     a drawer on narrow ones ---------- */
   var toc = document.querySelector("nav.toc");
   var tocToggle = document.getElementById("toc-toggle");
   function setToc(open, refocus) {
@@ -87,13 +103,30 @@
     if (open) { var first = toc.querySelector("a"); if (first) setTimeout(function () { first.focus(); }, 30); }
     if (!open && refocus) tocToggle.focus();
   }
+  function syncToc() {  // the button says whether the contents are showing at this width
+    if (wideQuery.matches) { toc.classList.remove("open"); tocToggle.setAttribute("aria-expanded", String(prefs.toc !== "hidden")); }
+    else tocToggle.setAttribute("aria-expanded", String(toc.classList.contains("open")));
+  }
   if (tocToggle && toc) {
-    tocToggle.addEventListener("click", function (e) { e.stopPropagation(); setToc(!toc.classList.contains("open")); });
+    syncToc();
+    if (wideQuery.addEventListener) wideQuery.addEventListener("change", syncToc);
+    tocToggle.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!wideQuery.matches) { setToc(!toc.classList.contains("open")); return; }
+      prefs.toc = prefs.toc === "hidden" ? "shown" : "hidden";
+      save(PREF_KEY, prefs); applyPrefs(); syncToc();
+      measure(); update();
+    });
+    document.addEventListener("click", function (e) {  // a tap beside the drawer closes it, and does nothing else
+      if (toc.classList.contains("open") && !toc.contains(e.target) && e.detail > 0) {  // a key press still does what it was for
+        setToc(false); e.preventDefault(); e.stopPropagation();
+      }
+    }, true);
     toc.addEventListener("click", function (e) {
       var a = e.target.closest("a"); if (!a) return;
-      setToc(false);
+      if (!wideQuery.matches) setToc(false);
       var to = a.hash && document.getElementById(a.hash.slice(1));  // keyboard focus moves with the jump
-      if (to) { to.tabIndex = -1; setTimeout(function () { to.focus({ preventScroll: true }); }, 30); }
+      if (to) { to.tabIndex = -1; setTimeout(function () { focusQuietly(to, e.detail > 0); }, 30); }
     });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && toc.classList.contains("open")) setToc(false, true); });
   }
@@ -131,6 +164,18 @@
     a.setAttribute("aria-haspopup", "dialog");
     if (/^\d/.test(a.textContent)) a.setAttribute("aria-label", "Reference " + a.textContent);
   });
+  function offerWayBack(li, from, fromY) {  // a button under the reference, back to the citation it came from
+    document.querySelectorAll(".ref-back").forEach(function (b) { b.remove(); });
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "ref-back"; b.textContent = "↩ Back to where you were";
+    b.addEventListener("click", function (e) {
+      e.stopPropagation(); b.remove();
+      if (from && from.getClientRects().length) from.scrollIntoView({ block: "center" });  // the citation itself: right even after the text size changed
+      else window.scrollTo(0, fromY);
+      if (from) focusQuietly(from, e.detail > 0);
+    });
+    li.appendChild(b);
+  }
   function openCard(a, moveFocus) {
     closeCard();
     cardFrom = a;
@@ -147,12 +192,15 @@
       var d = document.createElement("div");
       if (i) d.style.marginTop = ".6rem";
       d.innerHTML = li.innerHTML; // our own sanitised reference list, not source HTML
+      d.querySelectorAll(".ref-back").forEach(function (b) { b.remove(); });
       var go = document.createElement("a");
       go.href = "#ref-" + id; go.className = "go"; go.textContent = "Go to reference list";
-      go.addEventListener("click", function () {
+      go.addEventListener("click", function (e) {
+        var from = cardFrom, fromY = window.scrollY;
         closeCard(); li.classList.add("flash"); setTimeout(function () { li.classList.remove("flash"); }, 1600);
         var det = li.closest("details"); if (det) det.open = true;
-        li.tabIndex = -1; setTimeout(function () { li.focus(); }, 30);
+        offerWayBack(li, from, fromY);
+        li.tabIndex = -1; setTimeout(function () { focusQuietly(li, e.detail > 0); }, 30);
       });
       d.appendChild(go);
       card.appendChild(d);
@@ -161,7 +209,7 @@
     document.body.appendChild(card);
     var r = a.getBoundingClientRect();
     var top = window.scrollY + r.bottom + 6;
-    if (r.bottom + 6 + card.offsetHeight > window.innerHeight) top = Math.max(window.scrollY + 56, window.scrollY + r.top - card.offsetHeight - 6);
+    if (r.bottom + 6 + card.offsetHeight > window.innerHeight) top = Math.max(window.scrollY + barBottom(), window.scrollY + r.top - card.offsetHeight - 6);
     var left = Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - card.offsetWidth - 12);
     card.style.top = top + "px"; card.style.left = Math.max(8, left) + "px";
     card.addEventListener("keydown", function (e) {
@@ -173,6 +221,7 @@
   }
   var hoverTimer = null;
   document.addEventListener("mouseover", function (e) {
+    if (touch) return;  // a tap sends a mouseover too; the click opens the card
     var a = e.target.closest && e.target.closest("a.cite");
     if (a) { clearTimeout(hoverTimer); hoverTimer = setTimeout(function () { openCard(a); }, 250); }
   });
@@ -199,6 +248,7 @@
   var cite = document.body.getAttribute("data-cite") || "";
   var reference = document.body.getAttribute("data-reference") || document.title;
   var saveBtn = null, pending = null, stored = true;  // stored: false once the browser refuses to keep quotes
+  var removed = null;  // the last quote removed, offered back until the panel closes
 
   function quoteText(range) {
     var div = document.createElement("div");
@@ -276,13 +326,15 @@
     var h = document.createElement("div"); h.className = "clips-head";
     h.textContent = clips.length ? "Saved quotes" : "No saved quotes yet";
     clipsPanel.appendChild(h);
-    if (!clips.length) {
+    if (!clips.length && !removed) {
       var p = document.createElement("p"); p.className = "note";
-      p.textContent = "Select text in the paper, then choose Save quote or press Q. Quotes stay in this browser.";
+      p.textContent = touch ? "Select text in the paper, then tap Save quote. Quotes stay in this browser."
+                            : "Select text in the paper, then choose Save quote or press Q. Quotes stay in this browser.";
       clipsPanel.appendChild(p);
       return;
     }
     var all = document.createElement("div"); all.className = "row";
+    if (!clips.length) all.hidden = true;
     [["Copy all", function () { copy(asMarkdown()); }],
      ["Download as Markdown", function () {
        var a = document.createElement("a");
@@ -296,8 +348,28 @@
     });
     clipsPanel.appendChild(all);
     var ol = document.createElement("ol"); ol.className = "clips";
+    function undoItem() {  // above the list, so the quotes' numbers still match their place in it
+      var li = document.createElement("div"); li.className = "clip-removed";
+      var s = document.createElement("span"); s.textContent = "Quote removed.";
+      var b = document.createElement("button"); b.type = "button"; b.textContent = "Undo";
+      b.setAttribute("aria-label", "Undo removing the quote");
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (stored) clips = loadClips();
+        clips.splice(Math.min(removed.at, clips.length), 0, removed.clip);
+        if (stored) stored = save(CLIP_KEY, clips);
+        var id = removed.clip.id; removed = null;
+        renderClips();
+        var back = clipsPanel.querySelector('li[data-id="' + id + '"] button');
+        if (back) back.focus(); else clipsBtn.focus();
+      });
+      li.appendChild(s); li.appendChild(b);
+      return li;
+    }
+    if (removed) clipsPanel.appendChild(undoItem());
     clips.forEach(function (c, i) {
       var li = document.createElement("li");
+      li.setAttribute("data-id", c.id);
       var q = document.createElement("blockquote"); q.textContent = c.text;
       var m = document.createElement("div"); m.className = "note";
       m.textContent = citeFor(c) + (c.sec ? " · " + c.sec : "");
@@ -311,9 +383,12 @@
          el.tabIndex = -1; el.focus({ preventScroll: true });
        }],
        ["Remove", function () {
+         removed = { clip: c, at: i };
          clips = (stored ? loadClips() : clips).filter(function (x) { return x.id !== c.id; });
          if (stored) stored = save(CLIP_KEY, clips);
-         renderClips(); clipsBtn.focus();
+         renderClips();
+         var u = clipsPanel.querySelector(".clip-removed button");
+         if (u) u.focus(); else clipsBtn.focus();
        }]
       ].forEach(function (x) {
         var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
@@ -328,6 +403,7 @@
   function setClips(open, refocus) {
     if (!clipsPanel) return;
     if (open) { setPanel(false); if (stored) clips = loadClips(); renderClips(); }
+    if (!open) removed = null;
     clipsPanel.hidden = !open;
     clipsBtn.setAttribute("aria-expanded", String(open));
     if (open) { var f = clipsPanel.querySelector("button"); if (f) f.focus(); }
@@ -346,20 +422,24 @@
     var range = sel.getRangeAt(0);
     var main = document.querySelector("main");
     var anc = range.commonAncestorContainer;
-    if (!main || !main.contains(anc) || (anc.nodeType === 1 ? anc : anc.parentNode).closest("header.paper, .references, .clip-save, footer, .done-box, .orig-page")) { hideSave(); return; }
+    if (!main || !main.contains(anc) || (anc.nodeType === 1 ? anc : anc.parentNode).closest("header.paper, .references, .clip-save, footer, .done-box, .orig-page, .table-text")) { hideSave(); return; }
     var text = quoteText(range);
     if (text.length < 3) { hideSave(); return; }
     pending = locate(range); pending.text = text;
     if (!saveBtn) {
       saveBtn = document.createElement("button");
       saveBtn.type = "button"; saveBtn.className = "clip-save"; saveBtn.textContent = "Save quote";
+      if (!touch) { saveBtn.setAttribute("aria-keyshortcuts", "Q"); saveBtn.title = "Save quote (Q)"; }
       saveBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });  // keep the selection
       saveBtn.addEventListener("click", function (e) { e.stopPropagation(); saveClip(); });
       document.body.appendChild(saveBtn);
     }
     var r = range.getBoundingClientRect();
     var top = window.scrollY + r.top - saveBtn.offsetHeight - 8;
-    if (r.top - saveBtn.offsetHeight - 8 < 56) top = window.scrollY + r.bottom + 8;
+    if (touch) {  // a phone puts its own copy menu above the selection: go below, past the drag handle
+      top = window.scrollY + r.bottom + 30;
+      if (r.bottom + 30 + saveBtn.offsetHeight > window.innerHeight - 8) top = window.scrollY + Math.max(barBottom(), r.top - saveBtn.offsetHeight - 56);
+    } else if (r.top - saveBtn.offsetHeight - 8 < barBottom()) top = window.scrollY + r.bottom + 8;
     var left = Math.min(window.scrollX + r.left + r.width / 2 - saveBtn.offsetWidth / 2, window.scrollX + document.documentElement.clientWidth - saveBtn.offsetWidth - 12);
     saveBtn.style.top = top + "px"; saveBtn.style.left = Math.max(8, left) + "px";
   }
@@ -374,10 +454,89 @@
     if (e.key === "Escape") hideSave();
   });
 
-  /* ---------- figures: click to widen ---------- */
+  /* ---------- figures: each image is a button. With a margin to spread
+     into, it widens the figure in place; on narrower screens it opens the
+     figure full screen, at a size where its text can be read. ---------- */
+  var marginQuery = window.matchMedia ? matchMedia("(min-width: 1261px)") : { matches: true };
+  var figBtns = [];
+  function figName(fig) {
+    var l = fig.querySelector("figcaption .label");
+    var img = fig.querySelector("img"), kind = img && /^Table\b/.test(img.alt) ? "Table" : "Figure";  // an unlabelled table is still a table
+    return (l ? l.textContent : "").replace(/[.:]\s*$/, "").trim() || kind;
+  }
+  document.querySelectorAll("main figure img").forEach(function (img) {
+    if (img.closest("figcaption, .tablewrap, table")) return;  // an equation in a caption or cell is not the figure
+    var b = document.createElement("button");
+    b.type = "button"; b.className = "fig-zoom";
+    img.parentNode.insertBefore(b, img); b.appendChild(img);
+    figBtns.push(b);
+  });
+  function syncFigs() {
+    figBtns.forEach(function (b) {
+      var fig = b.closest("figure"), what = b.querySelector("img").alt || figName(fig);  // arXiv's figures often have no alt
+      if (marginQuery.matches) {
+        b.removeAttribute("aria-haspopup"); b.setAttribute("aria-pressed", String(fig.classList.contains("wide")));
+        b.setAttribute("aria-label", what + " (widen into the margin)");
+      } else {
+        fig.classList.remove("wide"); b.removeAttribute("aria-pressed"); b.setAttribute("aria-haspopup", "dialog");
+        b.setAttribute("aria-label", what + " (open full screen)");
+      }
+    });
+  }
+  syncFigs();
+  if (marginQuery.addEventListener) marginQuery.addEventListener("change", syncFigs);
+
+  var viewer = null, viewerFrom = null, viewerByPointer = false;
+  var behind = [];
+  function closeViewer() {
+    if (!viewer) return;
+    viewer.remove(); viewer = null;
+    behind.forEach(function (el) { el.inert = false; });
+    behind = [];
+    root.style.overflow = "";
+    if (viewerFrom) focusQuietly(viewerFrom, viewerByPointer);
+  }
+  function openViewer(b, byPointer) {
+    var img = b.querySelector("img"), name = figName(b.closest("figure"));
+    setPanel(false); setClips(false); closeCard();
+    viewerFrom = b; viewerByPointer = byPointer;
+    viewer = document.createElement("div"); viewer.className = "viewer";
+    viewer.setAttribute("role", "dialog"); viewer.setAttribute("aria-modal", "true"); viewer.setAttribute("aria-label", name);
+    var head = document.createElement("div"); head.className = "viewer-bar";
+    var title = document.createElement("span"); title.className = "viewer-title"; title.textContent = name;
+    var size = document.createElement("button"); size.type = "button";
+    var close = document.createElement("button"); close.type = "button"; close.textContent = "Close";
+    head.appendChild(title); head.appendChild(size); head.appendChild(close);
+    var body = document.createElement("div"); body.className = "viewer-body"; body.tabIndex = 0;
+    body.setAttribute("role", "region"); body.setAttribute("aria-label", name + ", scrolls both ways");
+    var big = document.createElement("img"); big.src = img.src; big.alt = img.alt;
+    body.appendChild(big);
+    viewer.appendChild(head); viewer.appendChild(body);
+    document.body.appendChild(viewer);
+    behind = [].filter.call(document.body.children, function (el) { return el !== viewer && !el.inert; });  // everything else, toasts and the skip link too
+    behind.forEach(function (el) { el.inert = true; });
+    root.style.overflow = "hidden";
+    var natural = img.naturalWidth || +img.getAttribute("width") || 0;
+    var room = body.clientWidth - 24;
+    function setFull(on) {
+      viewer.classList.toggle("full", on);
+      big.style.width = on ? Math.min(natural, room * 3) + "px" : "";
+      size.textContent = on ? "Fit to screen" : "Full size";
+    }
+    if (natural > room * 1.2) setFull(true);  // big enough that the full size is worth having: start there
+    else { setFull(false); size.hidden = true; }
+    size.addEventListener("click", function () { setFull(!viewer.classList.contains("full")); });
+    close.addEventListener("click", closeViewer);
+    viewer.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.stopPropagation(); closeViewer(); } });
+    close.focus();
+  }
+  document.addEventListener("keydown", function (e) { if (viewer && e.key === "Escape") closeViewer(); });  // also when focus has dropped to the page
   document.addEventListener("click", function (e) {
-    var img = e.target.closest("figure img"); if (!img) return;
-    img.closest("figure").classList.toggle("wide");
+    var b = e.target.closest(".fig-zoom"); if (!b) return;
+    if (marginQuery.matches) {
+      var fig = b.closest("figure");
+      b.setAttribute("aria-pressed", String(fig.classList.toggle("wide")));
+    } else openViewer(b, e.detail > 0);
   });
 
   /* ---------- position, progress and time left ---------- */
@@ -420,7 +579,7 @@
     else if (where) {
       var t = sectionTitle(cur.sec);
       where.textContent = !secLeft ? t  // the reference list has no reading time
-        : window.innerWidth < 560 ? sm + " min left" + (t ? " · " + t : "")
+        : window.innerWidth < 560 ? sm + " min left in section" + (t ? " · " + t : "")
         : (t ? t + " · " : "") + "about " + sm + " min left in section" + (cur.body && bm ? " · " + bm + " min to the end of the main text" : "");
     }
     if (bar && bodyTotal) bar.style.width = (100 * (1 - bodyLeft / bodyTotal)) + "%";

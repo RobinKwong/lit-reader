@@ -9,7 +9,9 @@
   --font: "Literata", "Iowan Old Style", Charter, Georgia, serif;
   --ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
   --toc-w: 16rem; --margin-w: 15rem; --gap: 3.5rem;
+  --bar-h: 2.75rem;
 }
+@media (pointer: coarse) { :root { --bar-h: 3.25rem; } }  /* room for 44px buttons */
 :root[data-theme="sepia"] {
   --bg: #f4ecd8; --fg: #3b2f22; --muted: #6f604c; --faint: #e3d7bd;
   --accent: #8a3b12; --card: #fbf5e6; --mark: #f1dd8f;
@@ -29,7 +31,7 @@
 :root[data-font="sans"] { --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
 
 * { box-sizing: border-box; }
-html { background: var(--bg); color: var(--fg); scroll-padding-top: 4rem; }
+html { background: var(--bg); color: var(--fg); scroll-padding-top: calc(var(--bar-h) + 1.25rem); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
   font-family: var(--font); font-size: var(--size); line-height: var(--lh);
@@ -51,11 +53,11 @@ main:focus { outline: none; }
   justify-content: center;
   padding: 0 1.5rem;
 }
-main { grid-column: 2; padding: 5rem 0 8rem; min-width: 0; }
+main { grid-column: 2; padding: calc(var(--bar-h) + 2.25rem) 0 8rem; min-width: 0; }
 
 /* ---------- top bar ---------- */
 .bar {
-  position: fixed; inset: 0 0 auto 0; height: 2.75rem; z-index: 20;
+  position: fixed; inset: 0 0 auto 0; height: var(--bar-h); z-index: 20;
   display: flex; align-items: center; gap: .75rem; padding: 0 1rem;
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(6px);
@@ -67,19 +69,29 @@ main { grid-column: 2; padding: 5rem 0 8rem; min-width: 0; }
   font: inherit; color: var(--fg); background: none; border: 1px solid var(--muted);
   border-radius: 6px; padding: .3rem .6rem; cursor: pointer; text-decoration: none;
 }
+.bar a.btn, .bar a.nojs-toc { display: inline-flex; align-items: center; }
+.bar a.nojs-toc { font: inherit; color: var(--fg); border: 1px solid var(--muted); border-radius: 6px; padding: .3rem .6rem; text-decoration: none; }
+
+/* ---------- where no script runs (an iPhone's attachment preview):
+   links instead of buttons that would do nothing ---------- */
+:root.js .nojs-toc { display: none; }
+:root:not(.js) #toc-toggle, :root:not(.js) #aa, :root:not(.js) #clips,
+:root:not(.js) .done-box, :root:not(.js) .au-toggle { display: none; }
+:root:not(.js) .au-rest[hidden] { display: inline; }
+@media (min-width: 981px) { :root:not(.js) .nojs-toc { display: none; } }  /* the contents are already beside the text */
 .bar button:hover { border-color: var(--muted); }
-.progress { position: fixed; top: 2.75rem; left: 0; height: 2px; background: var(--accent); width: 0; z-index: 21; }
-#toc-toggle { display: none; }
+.progress { position: fixed; top: var(--bar-h); left: 0; height: 2px; background: var(--accent); width: 0; z-index: 21; }
 
 /* ---------- settings panel ---------- */
 .panel {
-  position: fixed; top: 3.25rem; right: 1rem; z-index: 30; width: min(21rem, calc(100vw - 2rem));
+  position: fixed; top: calc(var(--bar-h) + .5rem); right: 1rem; z-index: 30; width: min(21rem, calc(100vw - 2rem));
+  max-height: calc(100vh - var(--bar-h) - 1.5rem); max-height: calc(100dvh - var(--bar-h) - 1.5rem); overflow-y: auto;  /* a phone held sideways */
   background: var(--card); color: var(--fg); border: 1px solid var(--faint); border-radius: 10px;
   padding: .9rem 1rem; font: 13px/1.4 var(--ui); box-shadow: 0 8px 30px rgba(0,0,0,.15);
 }
 .panel[hidden] { display: none; }
 .panel .row { display: flex; align-items: center; justify-content: space-between; margin: .45rem 0; gap: .5rem; }
-.panel .seg { display: flex; gap: .25rem; flex-wrap: wrap; justify-content: flex-end; }
+.panel .seg { display: flex; gap: .25rem; flex-wrap: wrap; justify-content: flex-end; align-items: center; }
 .panel .seg button {
   font: inherit; color: var(--fg); background: none; border: 1px solid var(--muted);
   border-radius: 5px; padding: .2rem .5rem; cursor: pointer;
@@ -88,7 +100,8 @@ main { grid-column: 2; padding: 5rem 0 8rem; min-width: 0; }
 .panel .note { color: var(--muted); font-size: 12px; margin-top: .6rem; }
 
 /* ---------- saved quotes ---------- */
-.clips-panel { width: min(26rem, calc(100vw - 2rem)); max-height: calc(100vh - 5rem); overflow-y: auto; }
+.clips-panel { width: min(26rem, calc(100vw - 2rem)); }
+.clip-removed { display: flex; align-items: center; gap: .6rem; color: var(--muted); border-top: 1px solid var(--faint); margin-top: .6rem; padding-top: .6rem; }
 .clips-head { font-weight: 600; margin-bottom: .3rem; }
 .clips-panel button {
   font: inherit; color: var(--fg); background: none; border: 1px solid var(--muted);
@@ -109,8 +122,8 @@ ol.clips .acts { display: flex; gap: .3rem; margin-top: .45rem; }
 
 /* ---------- contents sidebar ---------- */
 nav.toc {
-  grid-column: 1; position: sticky; top: 2.75rem; align-self: start;
-  max-height: calc(100vh - 2.75rem); overflow-y: auto;
+  grid-column: 1; position: sticky; top: var(--bar-h); align-self: start;
+  max-height: calc(100vh - var(--bar-h)); max-height: calc(100dvh - var(--bar-h)); overflow-y: auto;
   padding: 2rem 0 2rem; font: 13.5px/1.35 var(--ui);
 }
 nav.toc ol { list-style: none; margin: 0; padding: 0; }
@@ -188,7 +201,11 @@ a.cite:hover { border-bottom-style: solid; }
 .cite-card + .cite-card { margin-top: .3rem; }
 
 /* ---------- sidenotes and page numbers (Tufte-style margins) ---------- */
-.sn-mark { font: 600 .7em/0 var(--ui); color: var(--accent); cursor: pointer; vertical-align: super; padding: .35em .3em; }
+.sn-mark { font: 600 .7em/0 var(--ui); color: var(--accent); cursor: pointer; vertical-align: super; padding: .35em .3em;
+  text-decoration: underline dotted; text-decoration-thickness: 1px; text-underline-offset: 2px; }  /* tappable, like a citation */
+.quiet-focus:focus { outline: none; }  /* focus moved by a tap or click, not the keyboard */
+.ref-back { display: block; margin-top: .4rem; font: 13px var(--ui); color: var(--accent); background: none; border: 1px solid var(--accent); border-radius: 6px; padding: .3rem .7rem; cursor: pointer; }
+@media (pointer: coarse) { .ref-back { min-height: 2.75rem; } }
 .sidenote {
   float: right; clear: right; width: var(--margin-w);
   margin-right: calc(-1 * (var(--margin-w) + var(--gap)));
@@ -207,17 +224,31 @@ td .sidenote, th .sidenote { float: none; display: block; width: auto; margin: .
 .pg a:hover { text-decoration: underline; }
 
 /* the printed page, offered where text may not have come through */
-details.orig-page { margin: .4em 0 1.1em; font: 13px/1.4 var(--ui); color: var(--muted); }
-details.orig-page summary { cursor: pointer; display: inline-block; padding: .2rem .6rem; border: 1px solid var(--muted); border-radius: 999px; color: var(--fg); }
-details.orig-page[open] summary { margin-bottom: .5rem; }
-details.orig-page .orig-note { margin: 0 0 .5rem; }
+details.orig-page, details.table-text { margin: .4em 0 1.1em; font: 13px/1.4 var(--ui); color: var(--muted); }
+details.table-text { margin: -1em 0 1.8em; }  /* tucked under the figure it belongs to */
+details.orig-page summary, details.table-text summary { cursor: pointer; display: inline-block; padding: .2rem .6rem; border: 1px solid var(--muted); border-radius: 999px; color: var(--fg); }
+details.orig-page[open] summary, details.table-text[open] summary { margin-bottom: .5rem; }
+details.orig-page .orig-note, details.table-text .orig-note { margin: 0 0 .5rem; }
+details.table-text table.data { color: var(--fg); margin: 0; }
+@media print { details.table-text { display: none; } }
 details.orig-page img { display: block; max-width: 100%; height: auto; border: 1px solid var(--faint); border-radius: 4px; background: #fff; }
 @media print { details.orig-page { display: none; } }
 
 /* ---------- figures and tables ---------- */
 figure { margin: 1.8em 0; }
-figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 4px; cursor: zoom-in; background: #fff; }
-figure.wide img { cursor: zoom-out; }
+figure img { display: block; max-width: 100%; height: auto; margin: 0 auto; border-radius: 4px; background: #fff; }
+.fig-zoom { display: block; width: 100%; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: zoom-in; }
+figure.wide .fig-zoom { cursor: zoom-out; }
+
+/* a figure full screen, on screens with no margin to widen into */
+.viewer { position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
+.viewer-bar { display: flex; align-items: center; gap: .6rem; min-height: var(--bar-h); padding: 0 .75rem; border-bottom: 1px solid var(--faint); font: 14px/1.2 var(--ui); }
+.viewer-title { flex: 1; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.viewer-bar button { font: inherit; color: var(--fg); background: none; border: 1px solid var(--muted); border-radius: 6px; padding: .3rem .7rem; cursor: pointer; min-height: 2.25rem; }
+@media (pointer: coarse) { .viewer-bar button { min-height: 2.75rem; } }
+.viewer-body { flex: 1; min-height: 0; overflow: auto; display: flex; padding: .75rem; }
+.viewer-body img { display: block; margin: auto; max-width: 100%; max-height: 100%; width: auto; height: auto; background: #fff; border-radius: 4px; }
+.viewer.full .viewer-body img { max-width: none; max-height: none; height: auto; }
 figure.wide { margin-left: calc(-1 * var(--gap)); margin-right: calc(-1 * (var(--margin-w) + var(--gap))); }
 figcaption .tnote { display: block; margin-top: .3em; font-size: .9em; }
 figcaption { font: 14px/1.5 var(--ui); color: var(--muted); margin-top: .6rem; hyphens: manual; }
@@ -246,6 +277,7 @@ section.references summary { cursor: pointer; font: 14px var(--ui); color: var(-
 footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted); }
 .toast {
   position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%); z-index: 50;
+  width: max-content; max-width: calc(100vw - 2rem);
   background: var(--card); border: 1px solid var(--faint); border-radius: 8px; padding: .55rem .9rem;
   font: 13px var(--ui); box-shadow: 0 6px 20px rgba(0,0,0,.15);
 }
@@ -257,23 +289,61 @@ footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted
 @media (max-width: 1260px) {
   .layout { grid-template-columns: var(--toc-w) minmax(0, var(--measure)); }
   .sidenote { display: none; float: none; width: auto; margin: .4rem 0 .8rem; padding: .5rem .8rem; background: var(--card); border-radius: 6px; }
-  .sidenote.open { display: block; }
+  .sidenote.open, :root:not(.js) .sidenote { display: block; }  /* no script to open them: show them under their paragraph */
   figure.wide { margin-right: 0; }
 }
 @media (max-width: 980px) {
   .layout { grid-template-columns: minmax(0, var(--measure)); }
   main { grid-column: 1; }
   nav.toc {
-    position: fixed; top: 2.75rem; left: 0; bottom: 0; width: 18rem; z-index: 25; max-height: none;
+    position: fixed; top: var(--bar-h); left: 0; bottom: 0; width: 18rem; z-index: 25; max-height: none;
+    align-self: stretch;  /* Chrome aligns fixed boxes too: "start" would size the drawer to its contents, past the screen */
     background: var(--card); border-right: 1px solid var(--faint); padding: 1rem; transform: translateX(-105%);
     transition: transform .2s ease;
   }
   nav.toc { visibility: hidden; }
-  nav.toc.open { transform: none; visibility: visible; }
-  #toc-toggle { display: inline-block; }
+  nav.toc.open, :root:not(.js) nav.toc:target { transform: none; visibility: visible; }  /* :target: opened by the plain link */
+  nav.toc.open ~ main { cursor: pointer; }  /* iOS Safari passes a tap on text to the page's listener only on a clickable element */
   .pg { float: none; display: block; width: auto; margin: 0; text-align: left; }
   .pg::before { content: ""; display: block; border-top: 1px dashed var(--faint); margin: .3rem 0 0; }
   figure.wide { margin-left: 0; }
+}
+
+/* ---------- wide screens: the contents can be put away ----------
+   Its column stays, empty, so the text doesn't move. */
+@media (min-width: 981px) {
+  :root[data-toc="hidden"] nav.toc { display: none; }
+}
+
+/* ---------- phones ---------- */
+@media (max-width: 600px) {
+  :root { --size: 18px; }  /* the script sets the same default, or the reader's own choice */
+  .layout { padding: 0 1rem; }
+  main { padding: calc(var(--bar-h) + 1.25rem) 0 6rem; }
+  header.paper { margin-bottom: 2rem; }
+  header.paper h1 { font-size: 1.45em; }
+  .bar { gap: .45rem; padding: 0 .6rem; }
+  .bar a.btn { display: none; }  /* "All papers" is also at the foot of the contents */
+  #toc-toggle .lbl, .nojs-toc .lbl { display: none; }
+  .panel .row-width { display: none; }  /* the screen is already narrower than any line length */
+  nav.toc { width: min(20rem, 85vw); }
+  .cite-card {  /* a sheet along the bottom, clear of the text being read */
+    position: fixed; top: auto !important; left: 0 !important; right: 0; bottom: 0; z-index: 55;
+    max-width: none; max-height: 60vh; overflow-y: auto; border-radius: 12px 12px 0 0;
+    padding: 1rem 1.1rem 1.4rem; font-size: 15px;
+  }
+}
+
+/* ---------- touch: targets big enough for a finger ---------- */
+@media (pointer: coarse) {
+  .bar button, .bar a.btn, .bar a.nojs-toc { min-height: 2.75rem; min-width: 2.75rem; padding: .35rem .7rem; justify-content: center; }
+  .panel .seg button, .clips-panel button { min-height: 2.75rem; min-width: 2.75rem; padding: .3rem .65rem; }
+  .panel .row { margin: .6rem 0; }
+  nav.toc a { padding: .55rem .5rem; }
+  .sn-mark { padding: .6em .45em; }
+  .clip-save { padding: .75rem 1.1rem; font-size: 15px; }
+  .cite-card .go { padding: .5rem 0; }
+  details.orig-page summary, details.table-text summary { padding: .45rem .8rem; min-height: 2.75rem; display: inline-flex; align-items: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -300,7 +370,7 @@ footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted
 
 /* ---------- print ---------- */
 @media print {
-  .bar, .progress, nav.toc, .panel, .toast, .done-box, .cite-card { display: none !important; }
+  .bar, .progress, nav.toc, .panel, .toast, .done-box, .cite-card, .ref-back, .viewer { display: none !important; }
   .layout { display: block; padding: 0; }
   main { padding: 0; }
   body { font-size: 11pt; background: #fff; color: #000; }
