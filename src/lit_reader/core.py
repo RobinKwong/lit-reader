@@ -1849,6 +1849,7 @@ def docling_doc(meta, d, pages=None):
 
     total_words = sum(words(t.get("text") or "") for t in j.get("texts", []) if t.get("label") not in ("page_header", "page_footer"))
     deferred = []
+    last_fn = [None]  # the latest footnote, which may run on to the next page
     front_dropped = []
     seen_head = [False]
     chapter_pre = [None]
@@ -1859,7 +1860,9 @@ def docling_doc(meta, d, pages=None):
             doc.add(t="p", html=esc(pending))
             pending = None
         while deferred:
-            doc.add(t="p", html="<small>%s</small>" % esc(deferred.pop(0)))
+            fn = deferred.pop(0)
+            fn["block"] = {"t": "p", "html": "<small>%s</small>" % esc(fn["text"])}
+            doc.blocks.append(fn["block"])
 
     def page_marker(p):
         nonlocal last_page
@@ -2017,7 +2020,17 @@ def docling_doc(meta, d, pages=None):
             last["caption"] += ' <small class="tnote">%s</small>' % esc(text)
             continue
         if label == "footnote":
-            deferred.append(text)  # after the paragraph it interrupts, not inside it
+            fn = last_fn[0]
+            if (fn and p and fn["page"] and p > fn["page"] and re.match(r"^[a-z(]", text)
+                    and not re.search(r"[.!?:;”\"')\]]$", fn["text"])):
+                # the rest of the previous page's last footnote, carried over the page break
+                fn["text"] = dehyphen(fn["text"], text) if fn["text"].endswith("-") else fn["text"] + " " + text
+                fn["page"] = p
+                if fn.get("block"):
+                    fn["block"]["html"] = "<small>%s</small>" % esc(fn["text"])
+                continue
+            last_fn[0] = {"text": text, "page": p}
+            deferred.append(last_fn[0])  # after the paragraph it interrupts, not inside it
             continue
         if label == "formula":
             flush()
