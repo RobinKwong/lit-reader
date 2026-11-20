@@ -31,6 +31,9 @@ Ledger commands read their paths from a settings file, by default
   index_bar, index_kicker, index_note    optional wording for the index page
   [ledgers]
   main = "~/papers/ledger.sqlite"        names usable as --ledger or in the list
+  [email]                                for --email, in standalone mode too; see mail.py
+  to = "you@example.com"
+  smtp_host = "smtp.gmail.com"
 
   fetch  --route arxiv|jats --pid PID --ledger DB   download the structured source (online)
   pdf-convert --pid PID --ledger DB [--pages A-B]   run Docling on the cached PDF (offline)
@@ -2405,6 +2408,7 @@ def single_file_copy(doc, list_line=None, list_pos=None):
 
 
 def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None, epub=False, single=False):
+    """Returns ({"epub": path, "html": path}, meta): the copies written this run, None where not written."""
     meta = ledger_meta(ledger, pid)
     d = SRC / slug(meta)
     if route == "arxiv":
@@ -2424,11 +2428,9 @@ def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part
     (OUT / name).write_text(page, encoding="utf-8")
     print("wrote %s (%d words, %d references, %d notes)" % (OUT / name, total, len(doc.refs), doc.nnotes))
     report_coverage(cov, doc)
-    if epub:
-        write_epub_copy(page, meta, OUT / (slug(meta) + ".epub"))
-    if single:
-        write_single_copy(doc, OUT / "single-file" / name, line, pos)
-    return name
+    epub_path = write_epub_copy(page, meta, OUT / (slug(meta) + ".epub")) if epub else None
+    single_path = write_single_copy(doc, OUT / "single-file" / name, line, pos) if single else None
+    return {"epub": epub_path, "html": single_path}, doc.meta
 
 
 def load_list():
@@ -2447,9 +2449,13 @@ def cmd_build(a):
                 a.list_n = a.list_n or it.get("n")
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
-    build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part, a.epub, a.single_file)
+    mail_to = email_settings(a.email)
+    copies, meta = build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part,
+                             a.epub or a.email == "epub", a.single_file or a.email == "html")
     if LIST_FILE.exists():
         cmd_index(a)
+    if mail_to:  # after the index, so a failed send leaves nothing else undone
+        email_copy(mail_to, copies[a.email], meta)
 
 
 def cmd_all(a):
@@ -2851,6 +2857,9 @@ def take_route(want, meta, d, pdf, pages):
 def cmd_standalone(a):
     if a.pages and not re.fullmatch(r"\d+-\d+", a.pages):
         raise ReaderError("--pages takes a range such as 12-30")
+    mail_to = email_settings(a.email)
+    a.epub = a.epub or a.email == "epub"  # the copy to send has to be written first
+    a.single_file = a.single_file or a.email == "html"
     kind, value = parse_input(a.input)
     meta, d, pdf = identify(kind, value)
     if a.pages:  # a page range is a different conversion of the same PDF
@@ -2871,10 +2880,10 @@ def cmd_standalone(a):
     target.write_text(page, encoding="utf-8")
     print("wrote %s (route %s, %d words, %d references, %d notes)" % (target, route, total, len(doc.refs), doc.nnotes))
     report_coverage(cov, doc)
-    if a.epub:
-        write_epub_copy(page, doc.meta, out / (name + ".epub"))
-    if a.single_file:
-        write_single_copy(doc, out / (name + ".html"))
+    copies = {"epub": write_epub_copy(page, doc.meta, out / (name + ".epub")) if a.epub else None,
+              "html": write_single_copy(doc, out / (name + ".html")) if a.single_file else None}
+    if mail_to:
+        email_copy(mail_to, copies[a.email], doc.meta)
 
 
 LEDGER_COMMANDS = ("fetch", "pdf-convert", "build", "index", "all")
@@ -2886,8 +2895,9 @@ def write_epub_copy(page, meta, path):
         write_epub(page, meta, path)
     except Exception as e:  # the HTML copy is already written; one failed EPUB shouldn't stop a batch
         print("  EPUB not written (%s): %s" % (type(e).__name__, e))
-        return
+        return None
     print("wrote %s" % path)
+    return path
 
 
 def write_single_copy(doc, path, list_line=None, list_pos=None):
@@ -2897,16 +2907,43 @@ def write_single_copy(doc, path, list_line=None, list_pos=None):
         path.write_text(page, encoding="utf-8")
     except Exception as e:  # as with the EPUB: the main copy is already written, and one failure shouldn't stop a batch
         print("  single-file copy not written (%s): %s" % (type(e).__name__, e))
-        return
+        return None
     print("wrote %s (one file, %.1f MB, for a phone)" % (path, len(page.encode("utf-8")) / 1e6))
+    return path
 
 
 SINGLE_HELP = "also write a copy with everything inside one HTML file, to send to a phone"
+EMAIL_HELP = ("email a copy to yourself: the EPUB (the default, for Apple Books or a Kindle) or the single HTML file. "
+              "Set it up first with: lit-reader setup-email")
+
+
+def email_settings(kind):
+    """Checked before the build starts, so a long conversion never ends in a missing password."""
+    if not kind:
+        return None
+    from . import mail
+    try:
+        return mail.settings(read_settings(CONFIG) if CONFIG.is_file() else {}, CONFIG)
+    except mail.MailError as e:
+        raise ReaderError(str(e))
+
+
+def email_copy(s, path, meta):
+    from . import mail
+    if path is None:  # never fall back to a copy left by an earlier run
+        raise ReaderError("the copy to email wasn't written this time, so nothing was emailed")
+    title = re.sub(r"\s+", " ", strip_tags(meta.get("title_html") or esc(meta.get("title", "")))).strip() or path.stem
+    try:
+        mail.send(s, mail.message(s, path, title, full_reference(meta, title), __version__))
+    except mail.MailError as e:
+        raise ReaderError("the copies are written, but %s wasn't emailed: %s" % (path.name, e))
+    print("emailed %s to %s" % (path.name, s["to"]))
 
 
 def standalone_parser():
     ap = argparse.ArgumentParser(prog="lit-reader", description="Turn one academic paper into an offline HTML reading copy.",
-                                 epilog="Ledger commands: %s (each has its own --help)." % ", ".join(LEDGER_COMMANDS))
+                                 epilog="Ledger commands: %s (each has its own --help). "
+                                        "To set up --email: lit-reader setup-email" % ", ".join(LEDGER_COMMANDS))
     ap.add_argument("--version", action="version", version="lit-reader " + __version__)
     ap.add_argument("input", help="a PDF path, arXiv ID or URL, DOI, or PMCID")
     ap.add_argument("-o", "--output", help="output folder (default: ./<slug>/)")
@@ -2916,11 +2953,22 @@ def standalone_parser():
     ap.add_argument("--pages", help="PDF route only: convert these pages, for example 12-30")
     ap.add_argument("--epub", action="store_true", help="also write an EPUB copy for an e-reader")
     ap.add_argument("--single-file", action="store_true", help=SINGLE_HELP)
+    ap.add_argument("--email", nargs="?", const="epub", choices=["epub", "html"], help=EMAIL_HELP)
     return ap
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["setup-email"]:
+        argparse.ArgumentParser(prog="lit-reader setup-email",
+                                description="Set up --email: asks for your address and mail server, writes them to "
+                                            "the settings file, stores the password in Keychain and sends a test.").parse_args(argv[1:])
+        from . import mail
+        try:
+            return mail.setup(CONFIG, read_settings, __version__)
+        except ReaderError as e:  # an existing settings file that doesn't read
+            print("error: %s" % e, file=sys.stderr)
+            return 1
     if not argv or argv[0] not in LEDGER_COMMANDS:
         try:
             cmd_standalone(standalone_parser().parse_args(argv))
@@ -2947,6 +2995,7 @@ def main(argv=None):
     b.add_argument("--pages")
     b.add_argument("--epub", action="store_true")
     b.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")
+    b.add_argument("--email", nargs="?", const="epub", choices=["epub", "html"], help=EMAIL_HELP)
     sub.add_parser("index")
     al = sub.add_parser("all")
     al.add_argument("--epub", action="store_true")

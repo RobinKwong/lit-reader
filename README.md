@@ -19,8 +19,7 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
-- **A copy for your e-reader or iPhone.** Add `--epub` to also get an EPUB, with its page list and linked notes, to send to a Kindle or open in Apple Books. On an iPhone, this is the copy to read: see [Reading on a phone](#reading-on-a-phone).
-- **Pages that work on a phone.** On a phone, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen at a size you can read. Add `--single-file` to also get the reading copy as one HTML file, with nothing beside it, to send to a phone.
+- **Copies for your phone or e-reader.** On a phone, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen. `--epub` adds an EPUB, with its page list and linked notes, for Apple Books or a Kindle. `--single-file` adds the reading copy as one HTML file with nothing beside it, and `--email` sends either copy to you. On an iPhone, the EPUB is the copy to read: see [Reading on a phone](#reading-on-a-phone).
 
 ## Install
 
@@ -64,12 +63,45 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `--pages A-B` | Converts only these pages of a PDF, for example `--pages 12-30`. |
 | `--epub` | Also writes an EPUB copy into the same folder. |
 | `--single-file` | Also writes `<slug>.html` into the same folder: the same reading copy with its styles, script and fonts inside it, so the one file works on its own. It leaves out links to a local PDF, which wouldn't travel with it. |
+| `--email` | Also emails the EPUB to you, for Apple Books or a Kindle. `--email html` sends the single file instead. Put it after the paper. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
+
+### Emailing a copy to yourself
+
+`--email` sends the copy through your own mail account. To set it up, run this in Terminal and answer its questions:
+
+```
+lit-reader setup-email
+```
+
+It asks for your address, fills in the mail server for Gmail and iCloud addresses, and shows the settings before it writes them. On a Mac it then stores your password in Keychain and offers to send you a test email. Run it again to change anything.
+
+Gmail, iCloud and many other providers don't accept your normal password from a program, so create an app password in your account's security settings first. The command says where to find it for Gmail and iCloud.
+
+lit-reader checks the settings and password before it starts converting. If sending fails, the copies it has written stay where they are.
+
+To set it up by hand instead, add an `[email]` section to the settings file, `~/.config/lit-reader/config.toml`:
+
+```
+[email]
+to = "you@example.com"
+smtp_host = "smtp.gmail.com"
+smtp_port = "587"               # optional: 587 (the default) or 465
+smtp_user = "you@example.com"   # optional: defaults to the "to" address
+```
+
+The password never goes in that file. On a Mac, store it in Keychain with this command, which asks for it:
+
+```
+security add-generic-password -s lit-reader -a you@example.com -w
+```
+
+On other systems, set the `LIT_READER_SMTP_PASSWORD` environment variable.
 
 ## Reading on a phone
 
 The reading copies lay out for a phone screen, but how you get one onto a phone matters, because a phone's preview of an attachment may not run the page's script.
 
-- **iPhone:** use the EPUB. Open the attachment and choose Books from the share sheet. Apple Books gives you its own contents, footnote pop-ups, font settings and highlights. A single HTML file opened from the Gmail app on an iPhone shows the text, but the preview runs no script and can't follow links within the page, so the contents, citations and settings don't respond.
+- **iPhone:** use the EPUB. `--email` sends it to you; open the attachment from Mail and it goes into Books, or in the Gmail app choose Books from the share sheet. Apple Books gives you its own contents, footnote pop-ups, font settings and highlights. A single HTML file opened from the Gmail app on an iPhone shows the text, but the preview runs no script and can't follow links within the page, so the contents, citations and settings don't respond.
 - **Android, or a laptop:** a `--single-file` copy opened in a browser works like the folder copy.
 
 Where no script runs, a single file still shows the text, its time to read, footnotes under their paragraphs and each table's text version, and it hides the buttons that can't work.
@@ -113,7 +145,7 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **Figures and tables as images:** under each table in a PDF, a closed "as text" section holds Docling's reading of the table, for screen readers and small screens. It hasn't been checked by hand, and the page says so. In some Europe PMC papers, a screen reader can reach a table's caption but not its data. A chart's only description is its caption.
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Equations:** arXiv pages keep real maths. Europe PMC pages use the article's maths if it has any, and otherwise its image of the equation or its TeX source. In PDFs, an equation Docling can read appears as plain text, so check it against the original. One it can't read appears as an image of the printed equation.
-- **Screens:** lit-reader is designed for reading on a laptop or desktop, and pages also lay out for phones. The phone layout has been checked in a desktop browser's phone emulation; on a real phone, only a single file in the Gmail app's iPhone preview has been tried. A page needs the `assets` folder beside it unless you build it with `--single-file`. Each browser keeps its own quotes and reading position: a phone won't have what you saved on a laptop.
+- **Screens:** lit-reader is designed for reading on a laptop or desktop, and pages also lay out for phones. The phone layout has been checked in a desktop browser's phone emulation. On a real iPhone, an EPUB in Apple Books and a single file in the Gmail app's preview have been tried, but not a single file in a phone's browser. A page needs the `assets` folder beside it unless you build it with `--single-file`. Each browser keeps its own quotes and reading position: a phone won't have what you saved on a laptop.
 - **E-readers:** EPUB copies pass structural checks and open in Apple Books on an iPhone, but haven't been tested on a Kindle yet. How maths and wide tables look depends on the e-reader.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
 
@@ -138,6 +170,7 @@ lit-reader uses no AI service, analytics or account. Conversion happens on your 
 
 - **Fetching a paper:** an arXiv ID, DOI or PMCID is sent to arXiv, ar5iv, Crossref or Europe PMC, and the paper comes back.
 - **Looking up a local PDF:** an arXiv ID or DOI found on the first page is sent to arXiv or Crossref to find the title and authors. This happens on every route, including `--route pdf`, and can't be turned off. The PDF itself is never uploaded.
+- **Emailing a copy:** with `--email`, the copy is sent through the mail server in your settings, logging in over an encrypted connection.
 - **Installing:** uv downloads lit-reader, and Docling downloads its models the first time it runs.
 - **Following a link:** links in a reading copy open in your browser like any other link.
 
@@ -153,28 +186,13 @@ lit-reader is released under the [MIT licence](LICENSE). It includes the Literat
 
 ### v1.1
 
-New sources and checks:
+v1.1 takes the reading copies off the laptop, onto a phone or an e-reader, and lets you keep quotes from what you read.
 
-- **ar5iv fallback.** When arXiv has no HTML version of a paper, lit-reader uses ar5iv's conversion before falling back to the PDF.
-- **The printed page where text went missing.** Where a PDF page lost ordinary sentences in conversion, the reading copy offers a "Show the original page" button with the page as printed.
-
-New ways to read:
-
-- **Saved quotes.** Select a passage and save it with its author, year and page, then copy it or download all your quotes as Markdown.
-- **EPUB copies.** `--epub` writes an EPUB alongside the reading copy, for Apple Books or a Kindle.
-- **Phone layout.** Citations open in a sheet along the bottom, the contents sit in a drawer, buttons are sized for touch, and text starts at 18px rather than 20px.
-- **Single-file copies.** `--single-file` writes the reading copy as one HTML file in plain ASCII, so an email can't garble its text. It still shows its text and footnotes where no script runs.
-- **Contents you can hide.** On a laptop, the Contents button hides the sidebar without moving the text.
-- **Figures you can enlarge.** On a narrow screen, tapping a figure or table opens it full screen at full size. On a wide screen, it still widens into the margin.
-- **Tables as text.** Under each table from a PDF, a closed section holds the table's text as Docling read it, marked as unchecked, for screen readers and small screens.
-
-Smaller changes:
-
-- **Undo for a removed quote**, until the Quotes panel closes.
-- **A way back from the reference list.** "Go to reference list" leaves a "Back to where you were" button under the reference.
-- **Plainer contents.** The contents show "6 min" rather than "6′".
-- **A clearer phone bar.** The top bar on a phone says "min left in section".
-- **No hyphenation in EPUBs.** EPUB copies ask e-readers not to hyphenate, to match the reading copies.
+- **Reading on a phone.** Pages lay out for a phone screen. Citations open in a sheet along the bottom, the contents sit in a drawer, buttons are sized for touch, and tapping a figure or table opens it full screen.
+- **Copies to take with you.** `--epub` writes an EPUB for Apple Books or a Kindle. `--single-file` writes the reading copy as one HTML file that survives being emailed and still shows its text where no script runs. `--email` sends either copy to you through your own mail account, and `lit-reader setup-email` sets that up.
+- **Saved quotes.** Select a passage and save it with its author, year and page, then copy it or download all your quotes as Markdown. A removed quote can be restored until the Quotes panel closes.
+- **More of the paper, and a check on what's missing.** When arXiv has no HTML version of a paper, lit-reader tries ar5iv's conversion before the PDF. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed. Under each table from a PDF, an unchecked text version helps screen readers and small screens.
+- **Smaller changes.** On a laptop, the Contents button hides the sidebar. "Go to reference list" leaves a button back to where you were, and the contents show "6 min" rather than "6′". EPUBs aren't hyphenated, to match the reading copies.
 
 ### v1.0
 
