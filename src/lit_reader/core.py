@@ -600,7 +600,9 @@ def render(doc):
     # references
     refs_html = ""
     if doc.refs:
-        items = "".join('<li id="ref-%s"%s>%s</li>' % (safe_id(i), ' value="%s"' % i if str(i).isdigit() else "", h) for i, h in doc.refs)
+        linked = {} if m.get("single_file") else bundle_links(doc.refs, m)  # a single file travels without the other pages
+        items = "".join('<li id="ref-%s"%s>%s%s</li>' % (safe_id(i), ' value="%s"' % i if str(i).isdigit() else "", h, linked.get(i, ""))
+                        for i, h in doc.refs)
         refs_html = ('<section class="references" id="references" data-title="References">'
                      '<h2 id="references-start" data-sec="1" data-title="References" data-w="0" data-in="references" data-body="0">References</h2>'
                      '<details open><summary>%d references (citations in the text open these as cards)</summary><ol>%s</ol></details></section>') % (len(doc.refs), items)
@@ -621,10 +623,14 @@ def render(doc):
     main_mins = max(1, round(main_words(doc) / float(WPM)))
     meta_bits.append("about %d min of reading in the main text" % main_mins)
 
-    alone = bool(m.get("standalone") or m.get("single_file"))  # a single file has no list of papers beside it
+    alone = bool((m.get("standalone") and not m.get("bundle")) or m.get("single_file"))  # a single file has no list of papers beside it
     back = '<ol class="back"><li><a href="#top">↑ Back to the start</a></li>%s</ol>' % (
         "" if alone else '<li><a href="index.html">← All papers</a></li>')
-    toc_html = '<div class="toc-head">Contents</div><ol>%s</ol>%s' % ("".join(
+    # on a phone the top bar holds only the contents button and where you are; the rest waits here
+    tools = '<div class="toc-tools">%s<button type="button" data-proxy="clips">Quotes<span class="clip-count-n"></span></button>' \
+            '<button type="button" data-proxy="aa" aria-label="Aa, reading settings">Aa</button></div>' % (
+                "" if alone else all_link(m.get("place")).replace('class="btn"', 'class="btn tools-all"', 1))
+    toc_html = tools + '<div class="toc-head">Contents</div><ol>%s</ol>%s' % ("".join(
         '<li class="l%d"><a href="#%s"><span>%s</span><span class="mins">%s</span></a></li>' % (
             l, h, esc(t), ("%d min" % mins) if mins else "")
         for l, h, t, mins in toc), back)
@@ -640,7 +646,7 @@ def render(doc):
         authors=authors_html(authors), meta=" · ".join(meta_bits),
         abstracts=abstracts, body="\n".join(out), refs=refs_html, toc=toc_html,
         source=esc(doc.source), built=datetime.date.today().isoformat(),
-        panel=PANEL, all_link="" if alone else ALL_LINK, done="" if alone else DONE_SLOT)
+        panel=PANEL, all_link="" if alone else all_link(m.get("place")), done="" if alone else DONE_SLOT)
     # the finished prompt goes where the main text ends: before any appendix, or else before the references
     page = page.replace(DONE_SLOT, "" if alone else DONE_BOX, 1).replace(DONE_SLOT, "")
     return page, total_words
@@ -748,7 +754,49 @@ PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settin
   <div class="note">People read fastest in different fonts, and liking a font doesn't predict it (Wallace et al., 2022). It's worth trying each one for a page.</div>
 </div>"""
 
-ALL_LINK = '<a class="btn" href="index.html" aria-label="All papers"><span aria-hidden="true">←</span><span class="lbl"> All papers</span></a>'
+def all_link(place=None):
+    """The way back to the list, with the paper's place in it ("3 of 7") when it has one."""
+    if not place:
+        return '<a class="btn" href="index.html" aria-label="All papers"><span aria-hidden="true">←</span><span class="lbl"> All papers</span></a>'
+    n, total = place
+    return ('<a class="btn" href="index.html" aria-label="All papers. This is paper %d of %d">'
+            '<span aria-hidden="true">←</span><span class="lbl"> All papers</span>'
+            '<span class="place" aria-hidden="true">%d of %d</span></a>') % (n, total, n, total)
+
+
+def norm_words(s):
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower())
+
+
+def same_paper(ref_html, other):
+    """Whether a reference-list entry is `other`: by DOI or arXiv ID where the
+    entry gives one, otherwise by the other paper's title appearing in it."""
+    text = html.unescape(strip_tags(ref_html))
+    dois = set(d.rstrip(".,;)]").lower() for d in re.findall(DOI_RE, text))
+    if other.get("doi") and other["doi"].lower() in dois:
+        return True
+    if other.get("arxiv"):
+        aid = re.sub(r"v\d+$", "", other["arxiv"])
+        if re.search(r"(?<![\d.])%s(?:v\d+)?(?![\d])" % re.escape(aid), text):
+            return True
+    title = norm_words(other.get("title"))
+    return len(title) >= 20 and title[:60] in norm_words(text)  # short titles ("Trust") would match by accident
+
+
+def bundle_links(refs, m):
+    """ref id -> a link to another paper's reading copy in the same bundle."""
+    out = {}
+    for other in m.get("bundle_members") or []:
+        if other.get("pid") == m.get("pid"):
+            continue
+        for i, h in refs:
+            if i not in out and same_paper(h, other):
+                out[i] = (' <span class="in-bundle">In this bundle (%d of %d): <a href="%s">open its reading copy</a></span>'
+                          % (other["n"], other["total"], attr(other["href"])))
+    return out
+
+
+
 DONE_BOX = '<div class="done-box">Reached the end? <button id="mark-done" type="button">Mark as finished</button> It shows on the list of papers.</div>'
 DONE_SLOT = "<!-- lit-reader: end of the main text -->"
 
@@ -2428,8 +2476,8 @@ def single_file_copy(doc):
     return inline_assets(page)
 
 
-def build_one(pid, ledger, route, pages=None, part=None, epub=False, single=False):
-    """Returns ({"epub": path, "html": path}, meta): the copies written this run, None where not written."""
+def build_one(pid, ledger, route, pages=None, part=None, epub=False, single=False, place=None, members=None):
+    """Returns ({"epub": path, "html": path, "page": html}, meta): the copies written this run, None where not written."""
     meta = ledger_meta(ledger, pid)
     d = SRC / slug(meta)
     if route == "arxiv":
@@ -2441,6 +2489,8 @@ def build_one(pid, ledger, route, pages=None, part=None, epub=False, single=Fals
     else:
         raise ReaderError("unknown route %s" % route)
     doc.meta["part"] = part
+    doc.meta["place"] = place
+    doc.meta["bundle_members"] = members
     page, total, cov = finish_page(doc, meta, pages)
     write_assets()
     name = slug(meta) + ".html"
@@ -2449,7 +2499,7 @@ def build_one(pid, ledger, route, pages=None, part=None, epub=False, single=Fals
     report_coverage(cov, doc)
     epub_path = write_epub_copy(page, meta, OUT / (slug(meta) + ".epub")) if epub else None
     single_path = write_single_copy(doc, OUT / "single-file" / name) if single else None
-    return {"epub": epub_path, "html": single_path}, doc.meta
+    return {"epub": epub_path, "html": single_path, "page": page}, doc.meta
 
 
 def load_list():
@@ -2458,17 +2508,59 @@ def load_list():
     return json.loads(LIST_FILE.read_text(encoding="utf-8"))
 
 
+def list_members(L):
+    """The papers of one list that have a reading copy, for links between them."""
+    out = []
+    for k, it in enumerate(L["items"], 1):
+        if not it.get("route"):
+            continue
+        try:
+            meta = ledger_meta(it["ledger"], it["pid"])
+        except ReaderError:
+            continue
+        out.append({"pid": it["pid"], "title": meta.get("title"), "doi": meta.get("doi"), "arxiv": meta.get("arxiv"),
+                    "href": slug(meta) + ".html", "n": it.get("n") or k, "total": len(L["items"])})
+    return out
+
+
+def list_place(L, it, k):
+    return (it.get("n") or k, len(L["items"]))
+
+
+EPUB_MODES = ("papers", "bundle", "both")
+
+
+def epub_choice(v):
+    if v not in EPUB_MODES:
+        raise argparse.ArgumentTypeError("choose from papers, bundle, both")
+    return v
+
+
+def epub_mode(given):
+    """Which EPUBs to write: None for none, or "papers", "bundle" or "both".
+    A bare --epub (given as True: argparse would run a string const through
+    the type check) means the settings file's `epub = "..."`, or else "papers"."""
+    if given is not True:
+        return given
+    conf = read_settings(CONFIG) if CONFIG.is_file() else {}
+    v = conf.get("epub") or "papers"
+    if v not in EPUB_MODES:
+        raise ReaderError('%s: epub must be "papers", "bundle" or "both", not "%s"' % (CONFIG, v))
+    return v
+
+
 def cmd_build(a):
     lst = load_list() if LIST_FILE.exists() else {"lists": []}
-    part = None
+    part = place = members = None
     for L in lst["lists"]:
-        for it in L["items"]:
-            if it["pid"] == a.pid and L.get("name") == "Must-read":
+        for k, it in enumerate(L["items"], 1):
+            if it["pid"] == a.pid and place is None:  # the first list it's on
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
+                place, members = list_place(L, it, k), list_members(L)
     mail_to = email_settings(a.email)
     copies, meta = build_one(a.pid, a.ledger, a.route, a.pages, part,
-                             a.epub or a.email == "epub", a.single_file or a.email == "html")
+                             a.epub or a.email == "epub", a.single_file or a.email == "html", place, members)
     index_error = None
     if LIST_FILE.exists():
         try:
@@ -2482,20 +2574,63 @@ def cmd_build(a):
 
 
 def cmd_all(a):
+    mode = epub_mode(a.epub)
     lst = load_list()
     for L in lst["lists"]:
-        for it in L["items"]:
+        members, built, missing = list_members(L), [], []
+        for k, it in enumerate(L["items"], 1):
             if it.get("route"):
                 try:
-                    build_one(it["pid"], it["ledger"], it["route"], it.get("pages"), it.get("part"), a.epub, a.single_file)
+                    copies, meta = build_one(it["pid"], it["ledger"], it["route"], it.get("pages"), it.get("part"),
+                                             mode in ("papers", "both"), a.single_file, list_place(L, it, k), members)
+                    built.append((copies["page"], meta, slug(meta) + ".html"))
                 except ReaderError as e:
                     print("skipped %s: %s" % (it["pid"], e))
+                    try:
+                        missing.append(ledger_meta(it["ledger"], it["pid"]).get("title") or it["pid"])
+                    except ReaderError:
+                        missing.append(it["pid"])
+        if mode in ("bundle", "both") and built:
+            write_bundle_epub(built, L.get("name") or "Reading list", L.get("note") or "",
+                              OUT / (folder_name(L.get("name") or "reading-list") + ".epub"), missing)
     cmd_index(a)
+
+
+def paper_row(out, n, pid, meta, name, part=None, why_not=None):
+    """One paper on an index page. `name` is its page's file name in `out`."""
+    exists = bool(name) and (out / name).exists()
+    authors = meta.get("authors") or []
+    who = authors[0].split()[-1] + (" et al." if len(authors) > 2 else (" and " + authors[1].split()[-1] if len(authors) == 2 else "")) if authors else ""
+    desc = " · ".join(esc(x) for x in [who, str(meta.get("year") or ""), meta.get("venue") or "", (part or "").split(":")[0]] if x)
+    quotes = ""
+    if exists:
+        mm = re.search(r"about (\d+) min of reading", (out / name).read_text(encoding="utf-8"))
+        if mm:
+            desc += " · about %s min" % mm.group(1)
+        title = '<a href="%s">%s</a>' % (attr(name), esc(meta["title"]))
+        t = meta.get("title") or ""
+        quotes = ' data-title="%s" data-cite="%s" data-reference="%s"' % (attr(t), attr(short_citation(meta)), attr(full_reference(meta, t)))
+    else:
+        title = esc(meta["title"])
+        desc += (" · " if desc else "") + esc(why_not or "no reading copy yet")
+    return '<li class="%s" data-pid="%s"%s><span class="n">%s</span><span class="t">%s</span><span class="s"></span><span class="d">%s</span></li>' % (
+        "" if exists else "nofile", attr(pid), quotes, esc(str(n)), title, desc)
+
+
+def write_index(out, heading, sections, kicker, bar, note=""):
+    """sections: (name, note, rows). A section without a name has no heading of its own."""
+    write_assets(out)
+    lists = "\n".join('<section class="list">%s%s<ol>%s</ol></section>' % (
+        "<h2>%s</h2>" % esc(name) if name else "", '<p class="listnote">%s</p>' % esc(lnote) if lnote else "", "".join(rows))
+        for name, lnote, rows in sections)
+    page = INDEX.format(lists=lists, built=datetime.date.today().isoformat(), panel=PANEL, heading=esc(heading),
+                        bar=esc(bar), kicker=esc(kicker), note=esc(note + " ") if note else "")
+    (out / "index.html").write_text(page, encoding="utf-8")
+    print("wrote %s" % (out / "index.html"))
 
 
 def cmd_index(a):
     lst = load_list()
-    write_assets()
     sections = []
     for L in lst["lists"]:
         rows = []
@@ -2505,30 +2640,9 @@ def cmd_index(a):
             except ReaderError:
                 meta = {"title": it["pid"], "authors": [], "year": "", "venue": "", "pid": it["pid"]}
             name = slug(meta) + ".html" if meta.get("authors") is not None else ""
-            exists = name and (OUT / name).exists()
-            who = meta["authors"][0].split()[-1] + (" et al." if len(meta["authors"]) > 2 else (" and " + meta["authors"][1].split()[-1] if len(meta["authors"]) == 2 else "")) if meta["authors"] else ""
-            desc = " · ".join(esc(x) for x in [who, str(meta.get("year") or ""), meta.get("venue") or "",
-                                               (it.get("part") or "").split(":")[0]] if x)
-            if exists:
-                mins = ""
-                html_ = (OUT / name).read_text(encoding="utf-8")
-                mm = re.search(r"about (\d+) min of reading", html_)
-                if mm:
-                    mins = " · about %s min" % mm.group(1)
-                title = '<a href="%s">%s</a>' % (attr(name), esc(meta["title"]))
-                desc += mins
-            else:
-                title = esc(meta["title"])
-                desc += " · " + esc(it.get("why_not") or "no reading copy yet")
-            rows.append('<li class="%s" data-pid="%s"><span class="n">%s</span><span class="t">%s</span><span class="s"></span><span class="d">%s</span></li>' % (
-                "" if exists else "nofile", attr(it["pid"]), esc(str(it.get("n", ""))), title, desc))
-        sections.append('<section class="list"><h2>%s</h2><p class="listnote">%s</p><ol>%s</ol></section>' % (
-            esc(L["name"]), esc(L.get("note", "")), "".join(rows)))
-    page = INDEX.format(lists="\n".join(sections), built=datetime.date.today().isoformat(), panel=PANEL,
-                        bar=esc(INDEX_TEXT["index_bar"]), kicker=esc(INDEX_TEXT["index_kicker"]),
-                        note=esc(INDEX_TEXT["index_note"] + " ") if INDEX_TEXT["index_note"] else "")
-    (OUT / "index.html").write_text(page, encoding="utf-8")
-    print("wrote %s" % (OUT / "index.html"))
+            rows.append(paper_row(OUT, it.get("n", ""), it["pid"], meta, name, it.get("part"), it.get("why_not")))
+        sections.append((L["name"], L.get("note", ""), rows))
+    write_index(OUT, "Reading list", sections, INDEX_TEXT["index_kicker"], INDEX_TEXT["index_bar"], INDEX_TEXT["index_note"])
 
 
 INDEX = """<!doctype html>
@@ -2536,8 +2650,9 @@ INDEX = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="lit-reader index">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'self' 'unsafe-inline' file:; font-src data:; script-src 'self' file:">
-<title>Reading list</title>
+<title>{heading}</title>
 <link rel="stylesheet" href="assets/fonts.css">
 <link rel="stylesheet" href="assets/reader.css">
 </head>
@@ -2545,9 +2660,10 @@ INDEX = """<!doctype html>
 <div class="bar"><span class="where">{bar}</span><button id="aa" type="button" aria-label="Aa, reading settings" aria-expanded="false" aria-controls="panel">Aa</button></div>
 {panel}
 <div class="layout"><main>
-<header class="paper"><div class="kicker">{kicker}</div><h1>Reading list</h1>
+<header class="paper"><div class="kicker">{kicker}</div><h1>{heading}</h1>
 <div class="meta">{note}Built {built}.</div></header>
 {lists}
+<section class="bundle-quotes" id="bundle-quotes" aria-labelledby="bundle-quotes-h" hidden></section>
 </main></div>
 <script src="assets/reader.js"></script>
 </body>
@@ -2908,6 +3024,209 @@ def cmd_standalone(a):
         email_copy(mail_to, copies[a.email], doc.meta)
 
 
+# --------------------------------------------------------------------------
+# Bundles: several papers from a plain text file, with an index page
+# --------------------------------------------------------------------------
+
+BUNDLE_OPTS = re.compile(r"(?:\s+(?:pages|route)=\S+)+\s*$")
+ROUTES = ("auto", "online", "arxiv", "jats", "pdf")
+
+
+def read_bundle(path):
+    """A bundle file: `#` lines before the first paper give the title (the
+    first) and a note (the rest); then one paper per line, as standalone mode
+    takes it, optionally followed by pages=A-B and route=R. Relative PDF paths
+    are read from the file's own folder."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        raise ReaderError("can't read the bundle file %s: %s" % (path, e))
+    title, note, items = None, [], []
+    for no, raw in enumerate(lines, 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            text = line.lstrip("#").strip()
+            if not items and text:  # comments among the papers are just comments
+                if title is None:
+                    title = text
+                else:
+                    note.append(text)
+            continue
+        opts = {}
+        m = BUNDLE_OPTS.search(line)
+        if m:
+            for tok in m.group(0).split():
+                k, v = tok.split("=", 1)
+                opts[k] = v
+            line = line[:m.start()].strip()
+        if opts.get("pages") and not re.fullmatch(r"\d+-\d+", opts["pages"]):
+            raise ReaderError("%s line %d: pages= takes a range such as 12-30" % (path, no))
+        if opts.get("route") and opts["route"] not in ROUTES:
+            raise ReaderError("%s line %d: route= must be one of %s" % (path, no, ", ".join(ROUTES)))
+        p = Path(line).expanduser()
+        if (not re.match(r"[a-z][a-z0-9+.-]*://", line, re.I) and not p.is_absolute()
+                and ((path.parent / p).is_file() or line.lower().endswith(".pdf"))):
+            line = str(path.parent / p)
+        items.append({"input": line, "line": no, "pages": opts.get("pages"), "route": opts.get("route")})
+    if not items:
+        raise ReaderError("%s lists no papers" % path)
+    return {"title": title or path.stem.replace("-", " ").replace("_", " "), "note": " ".join(note), "items": items}
+
+
+def folder_name(title):
+    words_ = re.sub(r"[^a-z0-9]+", " ", unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()).split()
+    return "-".join(words_[:6]) or "bundle"
+
+
+def write_bundle_epub(built, title, note, path, missing=()):
+    """One EPUB holding every paper in `built`, a list of (page html, meta, page file name).
+    `missing` names the papers that weren't converted, so the book can say so."""
+    from .epub import write_bundle
+    try:
+        write_bundle(built, title, note, path, missing)
+    except Exception as e:  # the reading copies are already written
+        print("  bundle EPUB not written (%s): %s" % (type(e).__name__, e))
+        return None
+    print("wrote %s (%d papers in one EPUB)" % (path, len(built)))
+    return path
+
+
+WHAT_IT_IS = {"doi": "the DOI", "arxiv": "the arXiv ID", "pmcid": "the PMCID"}
+
+
+def bundle_failure(e, p, bundle_file):
+    """(reason, what to do) for a paper of a bundle that wasn't converted. The
+    advice is about the bundle file: a reading copy made on its own wouldn't
+    join the bundle."""
+    msg = str(e)
+    where = "line %d of %s" % (p["line"], bundle_file.name)
+    if p.get("kind") == "pdf":  # the PDF is already there: what went wrong is on this machine or in the file
+        said = next((l.strip()[5:].rstrip(":") for l in msg.splitlines() if l.strip().startswith("pdf: ")), None)
+        if said and "needs poppler" in said:
+            return said, "Install it, then run the command again."
+        if said:
+            return said, "Check that the PDF on %s opens, then run the command again." % where
+        lines = [l.strip() for l in msg.splitlines() if l.strip()] or [msg]
+        first = lines[1] if lines[0].endswith(":") and len(lines) > 1 else lines[0]  # the first route's reason, not the header
+        return first, "Check %s." % where
+    instead = WHAT_IT_IS.get(p.get("kind"))
+    swap = ("Download the PDF, put its path on %s in place of %s, and run the command again." % (where, instead) if instead
+            else "Download the PDF, put its path on %s, and run the command again." % where)
+    if msg.startswith("no open full text"):
+        return "no open copy online", swap
+    if msg.startswith("couldn't get the full text"):
+        return "the online sources didn't give its full text", "Try again later. If it still fails: " + swap[0].lower() + swap[1:]
+    return msg.splitlines()[0], "Check %s." % where
+
+
+def cmd_bundle(a):
+    bundle_file = Path(a.file).expanduser().resolve()
+    spec = read_bundle(bundle_file)
+    mode = epub_mode(a.epub)
+    out = Path(a.output).expanduser() if a.output else Path.cwd() / folder_name(spec["title"])
+    index = out / "index.html"
+    ours = index.is_file() and 'content="lit-reader index"' in index.read_text(encoding="utf-8", errors="replace")[:600]
+    if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not ours)):
+        raise ReaderError("%s already holds other files; choose an empty folder with -o" % out)
+    total = len(spec["items"])
+
+    # First every paper's record, so each page can link to the others
+    papers, used = [], set()
+    for n, it in enumerate(spec["items"], 1):
+        print("[%d/%d] %s" % (n, total, it["input"]))
+        p = dict(it, n=n)
+        try:
+            kind, value = parse_input(it["input"])
+            p["kind"] = kind
+            meta, d, pdf = identify(kind, value)
+        except ReaderError as e:
+            p["error"], p["fix"] = bundle_failure(e, p, bundle_file)
+            print("  not converted: %s. %s" % (p["error"], p["fix"]))
+            papers.append(p)
+            continue
+        if it["pages"]:  # a page range is a different conversion of the same PDF
+            d = d / ("pages-" + it["pages"])
+            d.mkdir(parents=True, exist_ok=True)
+        name = re.sub(r"-+", "-", slug(meta)).strip("-") or "paper"
+        base, k = name, 2
+        while name in used:  # the same paper twice, say for two page ranges
+            name, k = "%s-%d" % (base, k), k + 1
+        used.add(name)
+        # its own reading state: the same PDF's other ranges are other copies
+        pid = "%s-pages-%s" % (meta["pid"], it["pages"]) if it["pages"] else meta["pid"]
+        p.update(meta=meta, d=d, pdf=pdf, name=name, pid=pid)
+        papers.append(p)
+
+    # Then every conversion, so the pages link only to papers that were converted
+    for p in papers:
+        if not p.get("meta"):
+            continue
+        print("[%d/%d] converting %s" % (p["n"], total, p["meta"].get("title") or p["input"]))
+        meta = p["meta"]
+        meta.update(bundle=True, place=(p["n"], total))
+        try:
+            p["route"], p["doc"] = take_route(p["route"] or a.route, meta, p["d"], p["pdf"], p["pages"])
+        except ReaderError as e:
+            p["error"], p["fix"] = bundle_failure(e, p, bundle_file)
+            print("  not converted: %s. %s" % (p["error"], p["fix"]))
+            continue
+        p["doc"].meta["pid"] = p["pid"]
+    done = [p for p in papers if p.get("doc")]
+    members = [{"pid": p["doc"].meta["pid"], "title": p["meta"].get("title"), "doi": p["meta"].get("doi"),
+                "arxiv": p["meta"].get("arxiv"), "href": p["name"] + ".html", "n": p["n"], "total": total}
+               for p in done]
+
+    out.mkdir(parents=True, exist_ok=True)
+    write_assets(out)
+    built = []
+    for p in done:
+        doc, meta, route = p["doc"], p["meta"], p["route"]
+        doc.meta["bundle_members"] = members
+        if route == "pdf":  # the page links to its own copy of the PDF, beside it
+            doc.meta["pdf_href"] = p["name"] + ".pdf"
+            shutil.copyfile(str(meta["pdf_path"]), str(out / (p["name"] + ".pdf")))
+        page, words_, cov = finish_page(doc, doc.meta, p["pages"])
+        (out / (p["name"] + ".html")).write_text(page, encoding="utf-8")
+        print("wrote %s (route %s, %d words, %d references, %d notes)" % (out / (p["name"] + ".html"), route, words_, len(doc.refs), doc.nnotes))
+        report_coverage(cov, doc)
+        if mode in ("papers", "both"):
+            write_epub_copy(page, doc.meta, out / (p["name"] + ".epub"))
+        if a.single_file:
+            write_single_copy(doc, out / "single-file" / (p["name"] + ".html"))
+        built.append((page, doc.meta, p["name"] + ".html"))
+    if mode in ("bundle", "both") and built:
+        missing = [(p.get("meta") or {}).get("title") or p["input"] for p in papers if p.get("error")]
+        write_bundle_epub(built, spec["title"], spec["note"], out / (folder_name(spec["title"]) + ".epub"), missing)
+
+    rows = []
+    for p in papers:
+        meta = (p["doc"].meta if p.get("doc") else p.get("meta")) or {"title": p["input"], "authors": [], "year": "", "venue": ""}
+        why = ("not converted: %s. %s" % (p["error"], p["fix"])) if p.get("error") else None
+        rows.append(paper_row(out, p["n"], p.get("pid") or "line-%d" % p["line"], meta,
+                              p["name"] + ".html" if p.get("name") and not p.get("error") else "", why_not=why))
+    write_index(out, spec["title"], [("", spec["note"], rows)], "Bundle", "%d papers" % total)
+    failed = [p for p in papers if p.get("error")]
+    if failed:
+        print("\n%d of %d papers weren't converted:" % (len(failed), total))
+        for p in failed:
+            print("  \u201c%s\u201d: %s. %s" % ((p.get("meta") or {}).get("title") or p["input"], p["error"], p["fix"]))
+
+
+def bundle_parser():
+    ap = argparse.ArgumentParser(prog="lit-reader bundle",
+                                 description="Build reading copies of several papers, with an index page, from a text file: "
+                                             "one paper per line (a PDF path, arXiv ID or URL, DOI, or PMCID). "
+                                             "Lines starting with # before the first paper give the bundle's title and a note.")
+    ap.add_argument("file", help="the bundle file")
+    ap.add_argument("-o", "--output", help="output folder (default: ./<title>/)")
+    ap.add_argument("--route", choices=list(ROUTES), default="auto", help="source to use for every paper; a line's own route= wins")
+    ap.add_argument("--epub", nargs="?", const=True, type=epub_choice, metavar="papers|bundle|both", help=EPUB_HELP)
+    ap.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")
+    return ap
+
+
 LEDGER_COMMANDS = ("fetch", "pdf-convert", "build", "index", "all")
 
 
@@ -2935,6 +3254,8 @@ def write_single_copy(doc, path):
 
 
 SINGLE_HELP = "also write a copy with everything inside one HTML file, to send to a phone"
+EPUB_HELP = ("also write EPUBs for an e-reader: papers (the default) writes one per paper, bundle one holding every paper, "
+             "both writes both. A settings-file line epub = \"...\" sets the default")
 EMAIL_HELP = ("email a copy to yourself: the EPUB (the default, for Apple Books or a Kindle) or the single HTML file. "
               "Set it up first with: lit-reader setup-email")
 
@@ -2982,11 +3303,14 @@ def standalone_parser():
 def email_first(argv):
     """argv with a bare --email followed by something other than its own value
     written as --email=epub, so `lit-reader --email paper.pdf` doesn't take the
-    paper for the copy type."""
+    paper for the copy type. A bare --epub of `bundle` or `all` moves to the end,
+    where it keeps meaning "the default kind"."""
     out = list(argv)
     for i, v in enumerate(out[:-1]):
         if v == "--email" and out[i + 1] not in ("epub", "html"):
             out[i] = "--email=epub"
+    if out[:1] in (["bundle"], ["all"]) and "--epub" in out[:-1] and out[out.index("--epub") + 1] not in EPUB_MODES:
+        out.append(out.pop(out.index("--epub")))  # last, so it can't take the bundle file for its value
     return out
 
 
@@ -3002,6 +3326,13 @@ def main(argv=None):
         except ReaderError as e:  # an existing settings file that doesn't read
             print("error: %s" % e, file=sys.stderr)
             return 1
+    if argv[:1] == ["bundle"]:
+        try:
+            cmd_bundle(bundle_parser().parse_args(argv[1:]))
+        except ReaderError as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 1
+        return 0
     if not argv or argv[0] not in LEDGER_COMMANDS:
         try:
             cmd_standalone(standalone_parser().parse_args(argv))
@@ -3030,7 +3361,7 @@ def main(argv=None):
     b.add_argument("--email", nargs="?", const="epub", choices=["epub", "html"], help=EMAIL_HELP)
     sub.add_parser("index")
     al = sub.add_parser("all")
-    al.add_argument("--epub", action="store_true")
+    al.add_argument("--epub", nargs="?", const=True, type=epub_choice, metavar="papers|bundle|both", help=EPUB_HELP)
     al.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")
     a = ap.parse_args(argv)
     try:

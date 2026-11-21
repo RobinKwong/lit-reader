@@ -97,6 +97,36 @@ security add-generic-password -s lit-reader -a you@example.com -w
 
 On other systems, set the `LIT_READER_SMTP_PASSWORD` environment variable.
 
+### Bundles: several papers together
+
+A bundle is a set of papers read for one purpose, such as a seminar week, a literature review or an essay. List them in a plain text file, one per line, in the forms `lit-reader` takes on its own:
+
+```
+# Groups, trust and AI
+# For the essay: it rests on these papers or has to answer them.
+arXiv:2508.08242
+10.1177/02633957211024474
+papers/beavers-2026.pdf  pages=253-314
+PMC7104178  route=online
+```
+
+Lines starting with `#` before the first paper give the bundle's title (the first line) and a note. After a paper, `pages=A-B` and `route=ROUTE` work as the options of the same name do for one paper. A PDF path is read from the text file's folder.
+
+```
+lit-reader bundle reading.txt
+```
+
+This writes every reading copy into one folder, `./<title>/` (or `-o DIR`), with an `index.html` listing them in order. The index shows whether you've started or finished each paper and how many quotes you've saved from it, and under the list it offers every saved quote as one Markdown file, grouped by paper with each one's citation. Each paper's top bar shows its place in the bundle ("3 of 7"). When a reference in one paper is another paper of the bundle, its citation card says so and links to that paper's reading copy, whose top bar then offers the way back to the citation.
+
+A paper that can't be converted is listed on the index and at the end of the command's output, with the reason and what to change in the text file, and the rest are still built. Running the command again rebuilds the bundle in the same folder.
+
+| Option | What it does |
+|---|---|
+| `-o DIR` | Writes the bundle to `DIR` instead. |
+| `--route ROUTE` | The source for every paper, unless its line says otherwise. |
+| `--epub` | Also writes EPUBs. `--epub papers` (the default) writes one per paper, `--epub bundle` writes one EPUB holding every paper, with the bundle's contents first, and `--epub both` writes both. To make a bare `--epub` mean `bundle` or `both`, add a line such as `epub = "both"` to the settings file. |
+| `--single-file` | Also writes each paper as one HTML file, in `single-file/`. A single file leaves out the links to the other papers, which don't travel with it. |
+
 ## Reading on a phone
 
 The reading copies lay out for a phone screen, but how you get one onto a phone matters, because a phone's preview of an attachment may not run the page's script.

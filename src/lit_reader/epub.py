@@ -15,7 +15,7 @@ import re
 import uuid
 import zipfile
 
-from .core import Node, attr, esc, image_kind, parse_html
+from .core import Node, attr, esc, image_kind, parse_html, short_citation
 
 XHTML_NS = "http://www.w3.org/1999/xhtml"
 MATH_NS = "http://www.w3.org/1998/Math/MathML"
@@ -62,8 +62,9 @@ def fix_id(i):
 
 
 class Book(object):
-    def __init__(self, meta):
+    def __init__(self, meta, bundle=None):
         self.meta = meta
+        self.bundle = bundle or {}  # in a bundle's EPUB: each paper's page name -> (its folder, a label)
         self.images = {}       # sha -> (name, media type, bytes)
         self.where = {}        # id -> chapter file
         self.pages = []        # (file, id, label)
@@ -164,6 +165,12 @@ class Writer(object):
             s = n.find(lambda x: x.tag == "summary")
             return '<div class="table-text"><p><strong>%s</strong></p>%s</div>' % (
                 esc(s.text().strip() if s is not None else "Table as text"), self.kids(n))
+        if "in-bundle" in c:  # a reference that is another paper of the bundle
+            a = n.find(lambda x: x.tag == "a")
+            to = self.book.bundle.get(a.attrs.get("href", "")) if a is not None else None
+            if not to:  # a paper's own EPUB has no other paper to go to
+                return ""
+            return ' <em>In this book: <a href="../%s/title.xhtml">%s</a></em>' % (attr(to[0]), esc(to[1]))
         if t == "a":
             if "pdf-link" in c:
                 return ""
@@ -209,13 +216,13 @@ def section_title(h):
     return clean((h.attrs.get("data-title") or h.text()).strip()) or "Section"
 
 
-def build(page_html, meta):
-    """(files, book) for a finished page: files maps path in the book to bytes."""
+def build(page_html, meta, bundle=None):
+    """(files, toc) for a finished page: files maps path in the book to bytes."""
     root = parse_html(page_html)
     main = root.find(lambda x: x.tag == "main")
     if main is None:
         raise ValueError("not a lit-reader page")
-    book = Book(meta)
+    book = Book(meta, bundle)
     title = clean(meta.get("title") or "Untitled paper")
 
     head = main.find(lambda x: x.tag == "header")
@@ -359,7 +366,48 @@ CONTAINER = ('<?xml version="1.0" encoding="utf-8"?>\n'
 
 def write_epub(page_html, meta, path):
     files, toc = build(page_html, meta)
-    package = opf(meta, files, toc)
+    return write_zip(files, opf(meta, files, toc), path)
+
+
+def write_bundle(built, title, note, path, missing=()):
+    """One book of several papers. `built` is a list of (page html, meta, page
+    name). Each paper keeps its own files in a folder of its own (p01/, p02/,
+    ...), so its links and images work as in its own EPUB; a contents page
+    comes first, and the contents nest each paper's sections under it."""
+    bundle = {}
+    for i, (_, meta, name) in enumerate(built, 1):
+        bundle[name] = ("p%02d" % i, short_citation(meta))  # the paper as it's cited: "Tessler et al., 2024"
+    files, spine, nav, listing = {}, [], [], []
+    for page, meta, name in built:
+        folder = bundle[name][0]
+        try:
+            pf, toc = build(page, meta, bundle)
+        except ValueError as e:
+            print("  left out of the bundle EPUB: %s (%s)" % (meta.get("title"), e))
+            continue
+        for f, data in pf.items():
+            if f != "nav.xhtml":
+                files[folder + "/" + f] = data
+        spine += [folder + "/" + f for f, _ in toc]
+        t = clean(meta.get("title") or "Untitled paper")
+        nav.append('<li><a href="%s/title.xhtml">%s</a><ol>%s</ol></li>' % (folder, esc(t), "".join(
+            '<li><a href="%s/%s">%s</a></li>' % (folder, f, esc(st)) for f, st in toc[1:])))
+        who = ", ".join(clean(a) for a in (meta.get("authors") or [])[:3]) + (" et al." if len(meta.get("authors") or []) > 3 else "")
+        listing.append('<li><a href="%s/title.xhtml">%s</a>%s</li>' % (
+            folder, esc(t), esc(" · " + ", ".join(x for x in (who, str(meta.get("year") or "")) if x)) if who or meta.get("year") else ""))
+    if not spine:
+        raise ValueError("no paper could be added")
+    gone = ('<p class="meta">Not included, because %s couldn\'t be converted: %s.</p>' % (
+        "it" if len(missing) == 1 else "they", "; ".join(esc(clean(m)) for m in missing)) if missing else "")
+    files["index.xhtml"] = xhtml(title, '<h1>%s</h1>%s<ol>%s</ol>%s<p class="source">Made by lit-reader.</p>' % (
+        esc(clean(title)), '<p class="meta">%s</p>' % esc(clean(note)) if note else "", "".join(listing), gone))
+    files["style.css"] = CSS
+    files["nav.xhtml"] = xhtml("Contents", '<nav epub:type="toc" id="toc"><h2>Contents</h2><ol>%s</ol></nav>' % "".join(nav))
+    book = {"title": title, "authors": [], "pid": "bundle:" + "|".join(str(m.get("pid")) for _, m, _ in built)}
+    return write_zip(files, opf(book, files, [(f, "") for f in ["index.xhtml"] + spine]), path)
+
+
+def write_zip(files, package, path):
     part = str(path) + ".part"  # a failure leaves no half-written book where an e-reader would take it
     with zipfile.ZipFile(part, "w") as z:
         z.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip", compress_type=zipfile.ZIP_STORED)

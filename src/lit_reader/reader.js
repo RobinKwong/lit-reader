@@ -29,6 +29,10 @@
       el.addEventListener("blur", function () { el.classList.remove("quiet-focus"); }, { once: true });
     }
   }
+  function home(btn) {  // on a phone the bar's Quotes and Aa are hidden: focus goes back to the contents button
+    if (btn && btn.getClientRects().length) return btn;
+    return document.getElementById("toc-toggle") || btn || document.body;
+  }
   function barBottom() { var b = document.querySelector(".bar"); return (b ? b.offsetHeight : 44) + 12; }  // keep clear of the top bar
   var WIDTHS = { narrow: "47ch", medium: "54ch", wide: "62ch" };
   var LHS = { tight: 1.4, normal: 1.5, loose: 1.7 };
@@ -60,7 +64,7 @@
   function setPanel(open, refocus) {
     panel.hidden = !open;
     aa.setAttribute("aria-expanded", String(open));
-    if (!open && refocus) aa.focus();
+    if (!open && refocus) home(aa).focus();
   }
   if (aa && panel) {
     aa.addEventListener("click", function (e) { e.stopPropagation(); setPanel(panel.hidden); });
@@ -83,14 +87,102 @@
   }
 
   if (!pid) {
-    // the index page: show each paper's reading status
-    document.querySelectorAll(".list li[data-pid]").forEach(function (li) {
+    // the index page: each paper's reading status and saved quotes, then every quote together
+    var rows = [].slice.call(document.querySelectorAll(".list li[data-pid]"));
+    rows.forEach(function (li) {
       var st = load("litreader.status." + li.getAttribute("data-pid"), {});
-      var s = li.querySelector(".s"); if (!s || !st.state) return;
-      s.textContent = st.state === "done" ? "Finished" : "In progress";
-      s.className = "s " + (st.state === "done" ? "done" : "started");
+      var s = li.querySelector(".s"); if (!s) return;
+      var nq = li.hasAttribute("data-cite") ? indexClips(li.getAttribute("data-pid")).length : 0;
+      var bits = [];
+      if (st.state) bits.push(st.state === "done" ? "Finished" : "In progress");
+      if (nq) bits.push(nq === 1 ? "1 quote" : nq + " quotes");
+      s.textContent = bits.join(" · ");
+      if (st.state) s.className = "s " + (st.state === "done" ? "done" : "started");
     });
+    indexQuotes(rows);
     return;
+  }
+
+  function indexClips(p) { var v = load("litreader.clips." + p, []); return Array.isArray(v) ? v : []; }
+  /* Every saved quote from the papers on this page, to download or copy as one file.
+     Each paper's quotes stay where that paper keeps them; this only reads them. */
+  function indexQuotes(rows) {
+    var box = document.getElementById("bundle-quotes");
+    if (!box) return;
+    var seen = {}, papers = [];
+    rows.forEach(function (li) {
+      var p = li.getAttribute("data-pid");
+      if (seen[p] || !li.hasAttribute("data-cite")) return;  // a paper listed twice keeps one set of quotes
+      seen[p] = true;
+      var c = indexClips(p);
+      if (c.length) papers.push({ pid: p, clips: c, title: li.getAttribute("data-title") || "",
+                                  cite: li.getAttribute("data-cite") || "", reference: li.getAttribute("data-reference") || "" });
+    });
+    if (!papers.length) return;
+    var heading = (document.querySelector("h1") || {}).textContent || "these papers";
+    var status = document.createElement("p"); status.className = "sr"; status.setAttribute("role", "status");
+    function exportedKey(pp) { return "litreader.clipsExported." + pp.pid; }
+    function notExported(pp) { var at = load(exportedKey(pp), ""); return pp.clips.filter(function (c) { return !at || c.at > at; }).length; }
+    function citeFor(pp, c) { return "(" + pp.cite + (c.page ? (c.page.indexOf("–") > 0 ? ", pp. " : ", p. ") + c.page : "") + ")"; }
+    function markdown() {
+      var out = ["# Quotes from " + heading, ""];
+      papers.forEach(function (pp) {
+        out.push("## " + pp.title, "", pp.reference, "");
+        pp.clips.forEach(function (c) { out.push("> " + c.text, "", citeFor(pp, c) + (c.sec ? " · " + c.sec : ""), ""); });
+      });
+      return out.join("\n");
+    }
+    function markExported(label) {
+      var now = new Date().toISOString();
+      papers.forEach(function (pp) { save(exportedKey(pp), now); });  // each paper's own reminder clears too
+      draw();
+      var b = [].filter.call(box.querySelectorAll("button"), function (x) { return x.textContent === label; })[0];
+      if (b) b.focus();  // the clicked button was redrawn
+    }
+    function download() {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([markdown()], { type: "text/markdown" }));
+      a.download = "quotes-" + (heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "papers") + ".md";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+      markExported("Download as Markdown");
+    }
+    function copyAll() {
+      var text = markdown();
+      function fallback() {
+        var t = document.createElement("textarea"), ok = false; t.value = text; t.setAttribute("readonly", "");
+        t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select();
+        try { ok = document.execCommand("copy"); } catch (e) {}
+        t.remove();
+        return ok;
+      }
+      function done(ok) {
+        if (ok) markExported("Copy all");
+        status.textContent = ok ? "Copied." : "Couldn't copy. Use Download as Markdown instead.";
+        if (!box.contains(status)) box.appendChild(status);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
+      else done(fallback());
+    }
+    function draw() {
+      box.innerHTML = "";
+      box.hidden = false;
+      var total = 0, left = 0;
+      papers.forEach(function (pp) { total += pp.clips.length; left += notExported(pp); });
+      var h = document.createElement("h2"); h.id = "bundle-quotes-h"; h.textContent = "Saved quotes";
+      var p = document.createElement("p"); p.className = "listnote";
+      p.textContent = (total === 1 ? "1 quote" : total + " quotes") + " from " + (papers.length === 1 ? "1 paper" : papers.length + " papers") +
+        ", kept only in this browser. " + (!left ? "All downloaded." : left === total ? "None downloaded yet." : left + " not downloaded yet.") +
+        " The file groups them by paper, each with its citation.";
+      var row = document.createElement("div"); row.className = "row";
+      [["Download as Markdown", download], ["Copy all", copyAll]].forEach(function (x, i) {
+        var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
+        if (i === 0) b.className = "primary";
+        b.addEventListener("click", x[1]); row.appendChild(b);
+      });
+      box.appendChild(h); box.appendChild(p); box.appendChild(row); box.appendChild(status);
+    }
+    draw();
   }
 
   /* ---------- contents: a sidebar that can be put away on wide screens,
@@ -129,6 +221,18 @@
       if (to) { to.tabIndex = -1; setTimeout(function () { focusQuietly(to, e.detail > 0); }, 30); }
     });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && toc.classList.contains("open")) setToc(false, true); });
+    toc.querySelectorAll("[data-proxy]").forEach(function (b) {  // Quotes and Aa, kept in the drawer on a phone
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();  // or the click would reach the page and close the panel it opens
+        var real = document.getElementById(b.getAttribute("data-proxy"));
+        setToc(false);
+        if (real) real.click();
+        var opened = real && document.getElementById(real.getAttribute("aria-controls") || "panel");
+        if (real && real.id === "aa" && opened && !opened.hidden) {  // Quotes moves focus itself; settings would leave it in the closed drawer
+          var first = opened.querySelector("button, input, select, a[href]"); if (first) first.focus();
+        }
+      });
+    });
   }
 
   /* ---------- sidenotes on narrow screens ---------- */
@@ -396,6 +500,7 @@
   if (clipsBtn) window.addEventListener("scroll", maybeHint, { passive: true });
   function renderClips() {
     if (clipCount) clipCount.textContent = clips.length ? "(" + clips.length + ")" : "";
+    document.querySelectorAll(".clip-count-n").forEach(function (n) { n.textContent = clips.length ? " (" + clips.length + ")" : ""; });
     showDoneQuotes();
     if (!clipsPanel) return;
     clipsPanel.innerHTML = "";
@@ -439,7 +544,7 @@
         var id = removed.clip.id; removed = null;
         renderClips();
         var back = clipsPanel.querySelector('li[data-id="' + id + '"] button');
-        if (back) back.focus(); else clipsBtn.focus();
+        if (back) back.focus(); else home(clipsBtn).focus();
       });
       li.appendChild(s); li.appendChild(b);
       return li;
@@ -466,7 +571,7 @@
          if (stored) stored = save(CLIP_KEY, clips);
          renderClips();
          var u = clipsPanel.querySelector(".clip-removed button");
-         if (u) u.focus(); else clipsBtn.focus();
+         if (u) u.focus(); else home(clipsBtn).focus();
        }]
       ].forEach(function (x) {
         var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
@@ -485,7 +590,7 @@
     clipsPanel.hidden = !open;
     clipsBtn.setAttribute("aria-expanded", String(open));
     if (open) { var f = clipsPanel.querySelector("button"); if (f) f.focus(); }
-    if (!open && refocus) clipsBtn.focus();
+    if (!open && refocus) home(clipsBtn).focus();
   }
   if (clipsBtn && clipsPanel) {
     renderClips();
@@ -712,7 +817,60 @@
   if (doneBtn) doneBtn.addEventListener("click", function () {
     var st = load("litreader.status." + pid, {});
     st.state = st.state === "done" ? "started" : "done"; save("litreader.status." + pid, st); showDone();
+    toast(st.state === "done" ? "<span>Marked as finished. It shows on the list of papers.</span>"
+                              : "<span>No longer marked as finished.</span>", 3000);
   });
+
+  /* ---------- back to the paper you came from ----------
+     Following a reference to another paper of the bundle leaves a note in
+     this tab, so that paper's bar can offer the way back to the citation. */
+  var FROM_KEY = "litreader.from";
+  function fileName(href) { return decodeURIComponent((href || "").split(/[?#]/)[0].split("/").pop()); }
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest && e.target.closest(".in-bundle a");
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;  // opening elsewhere leaves this tab where it is
+    var at = card && card.contains(a) && cardFrom ? cardFrom.closest("main [data-w]") : null;  // the paragraph with the citation
+    var block = at ? at.id : (latest && latest.id) || "";
+    try { sessionStorage.setItem(FROM_KEY, JSON.stringify({ to: fileName(a.getAttribute("href")), back: fileName(location.pathname),
+                                                            block: block, label: cite })); } catch (err) {}
+  }, true);
+  (function offerWayBack() {
+    var from = null;
+    try { from = JSON.parse(sessionStorage.getItem(FROM_KEY) || "null"); sessionStorage.removeItem(FROM_KEY); } catch (err) {}
+    if (!from || from.to !== fileName(location.pathname) || !from.back || !/^[\w.-]+\.html$/.test(from.back)) return;
+    var a = document.createElement("a");
+    a.className = "btn back-from";
+    a.href = from.back + (from.block && /^[\w-]+$/.test(from.block) ? "#" + from.block : "");
+    a.setAttribute("aria-label", "Back to " + (from.label || "the paper you came from"));
+    var arrow = document.createElement("span"); arrow.setAttribute("aria-hidden", "true"); arrow.textContent = "↩";
+    var lbl = document.createElement("span"); lbl.textContent = " " + (from.label || "Back");
+    a.appendChild(arrow); a.appendChild(lbl);
+    var bar = document.querySelector(".bar");
+    if (bar) bar.insertBefore(a, document.getElementById("toc-toggle"));
+  })();
+
+  /* ---------- on a phone, the top bar steps aside while you read on ----------
+     Scrolling down hides it; scrolling up, or reaching the top, brings it back.
+     Jumps the page makes itself, before you've touched it, don't count. */
+  (function barSteppingAside() {
+    var phoneNow = window.matchMedia ? matchMedia("(max-width: 600px)") : { matches: false };
+    var bar = document.querySelector(".bar"), lastY = window.scrollY, touched = false;
+    if (!bar) return;
+    ["touchstart", "wheel", "keydown", "mousedown"].forEach(function (t) {
+      window.addEventListener(t, function () { touched = true; }, { passive: true, once: true });
+    });
+    function show() { root.classList.remove("bar-away"); }
+    function busy() {
+      return (toc && toc.classList.contains("open")) || (panel && !panel.hidden) || (clipsPanel && !clipsPanel.hidden) || bar.contains(document.activeElement);
+    }
+    window.addEventListener("scroll", function () {
+      var y = window.scrollY;
+      if (!phoneNow.matches || !touched || y < 60 || busy()) { show(); lastY = y; return; }
+      if (y > lastY + 8) { root.classList.add("bar-away"); lastY = y; }
+      else if (y < lastY - 8) { show(); lastY = y; }
+    }, { passive: true });
+    bar.addEventListener("focusin", show);
+  })();
 
   function start() {
     measure(); showDone();

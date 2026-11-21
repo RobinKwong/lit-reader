@@ -4,7 +4,7 @@
 
 :root {
   --bg: #fbfaf7; --fg: #1f1f1f; --muted: #6b6760; --faint: #e6e2da;
-  --accent: #8a3b12; --card: #ffffff; --mark: #fff3b0;
+  --accent: #8a3b12; --card: #ffffff; --mark: #fff3b0; --done: #2f6b2f;
   --size: 20px; --lh: 1.5; --measure: 54ch;
   --font: "Literata", "Iowan Old Style", Charter, Georgia, serif;
   --ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
@@ -14,16 +14,16 @@
 @media (pointer: coarse) { :root { --bar-h: 3.25rem; } }  /* room for 44px buttons */
 :root[data-theme="sepia"] {
   --bg: #f4ecd8; --fg: #3b2f22; --muted: #6f604c; --faint: #e3d7bd;
-  --accent: #8a3b12; --card: #fbf5e6; --mark: #f1dd8f;
+  --accent: #8a3b12; --card: #fbf5e6; --mark: #f1dd8f; --done: #2f6b2f;
 }
 :root[data-theme="dark"] {
   --bg: #1b1b1d; --fg: #dad7d0; --muted: #9a958c; --faint: #34332f;
-  --accent: #e0a37a; --card: #252527; --mark: #5a4b1c;
+  --accent: #e0a37a; --card: #252527; --mark: #5a4b1c; --done: #6fbf73;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     --bg: #1b1b1d; --fg: #dad7d0; --muted: #9a958c; --faint: #34332f;
-    --accent: #e0a37a; --card: #252527; --mark: #5a4b1c;
+    --accent: #e0a37a; --card: #252527; --mark: #5a4b1c; --done: #6fbf73;
   }
 }
 :root[data-font="iowan"] { --font: "Iowan Old Style", Charter, Georgia, serif; }
@@ -142,6 +142,7 @@ nav.toc a.current { color: var(--fg); border-left-color: var(--accent); backgrou
 nav.toc .l3 a { padding-left: 1.4rem; font-size: 12.5px; }
 nav.toc .mins { flex: none; font-variant-numeric: tabular-nums; font-size: 11.5px; padding-top: .1rem; }
 nav.toc .back { margin-top: .8rem; }
+.toc-tools { display: none; }  /* phones only, below */
 nav.toc .toc-head { font-weight: 600; color: var(--fg); padding: 0 .5rem .6rem; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
 
 /* ---------- header card ---------- */
@@ -321,8 +322,24 @@ footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted
   main { padding: calc(var(--bar-h) + 1.25rem) 0 6rem; }
   header.paper { margin-bottom: 2rem; }
   header.paper h1 { font-size: 1.45em; }
-  .bar { gap: .45rem; padding: 0 .6rem; }
-  #toc-toggle .lbl, .nojs-toc .lbl, .bar a.btn .lbl { display: none; }  /* icons only: ← all papers, ☰ contents */
+  /* The top bar is only the contents button and where you are, as thin as a finger allows.
+     All papers, Quotes and Aa sit at the top of the contents drawer instead. */
+  :root { --bar-h: 2.5rem; }
+  .bar { gap: .2rem; padding: 0 .75rem 0 0; }
+  .bar a.btn:not(.back-from), .bar #clips, body:not(.index) .bar #aa { display: none; }  /* the index has no drawer: it keeps Aa */
+  .bar #toc-toggle, .bar a.nojs-toc { border: 0; border-radius: 0; min-height: var(--bar-h); min-width: 2.75rem; padding: 0; justify-content: center; font-size: 17px; }
+  #toc-toggle .lbl, .nojs-toc .lbl { display: none; }
+  .toc-tools { display: flex; flex-wrap: wrap; gap: .4rem; padding: 0 0 .9rem; margin: 0 0 .9rem; border-bottom: 1px solid var(--faint); }
+  .toc-tools button, .toc-tools a.btn {
+    font: 14px/1.2 var(--ui); color: var(--fg); background: none; border: 1px solid var(--muted); border-radius: 6px;
+    min-height: 2.75rem; min-width: 2.75rem; padding: .35rem .55rem; justify-content: center; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: .3em;
+  }
+  .toc-tools a.tools-all { flex-basis: 100%; justify-content: flex-start; }  /* its own row: the three don't fit on one */
+  .toc-tools .place { color: var(--muted); }
+  .toc-tools .lbl + .place::before { content: "·"; margin-right: .3em; }
+  :root:not(.js) .toc-tools button { display: none; }
+  :root:not(.js) .toc-tools:not(:has(a)) { display: none; }  /* a single file without its script: nothing left in the row */
+  .index .bar #aa { min-height: 2.25rem; padding-top: 0; padding-bottom: 0; }  /* inside the thinner bar */
   .panel .row-width { display: none; }  /* the screen is already narrower than any line length */
   nav.toc { width: min(20rem, 85vw); }
   .cite-card {  /* a sheet along the bottom, clear of the text being read */
@@ -345,7 +362,7 @@ footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted
 }
 
 @media (prefers-reduced-motion: reduce) {
-  nav.toc { transition: none; }
+  nav.toc, .bar, .progress { transition: none; }
   .flash-block { animation: none; }
 }
 
@@ -363,8 +380,23 @@ footer.source { margin-top: 2rem; font: 12.5px/1.5 var(--ui); color: var(--muted
 .list .d { grid-column: 2; font: 13.5px/1.45 var(--ui); color: var(--muted); }
 .list .s { grid-row: 1; grid-column: 3; font: 12px/1.9 var(--ui); color: var(--muted); white-space: nowrap; }
 .list .s.started { color: var(--accent); }
-.list .s.done { color: #3d7a3d; }
+.list .s.done { color: var(--done); }  /* 6.2:1 light, 5.5:1 sepia, 7.7:1 dark */
 .list .nofile .t { color: var(--muted); font-weight: 500; }
+.bundle-quotes h2 { font-size: 1.15em; margin: 2.6em 0 .3em; }
+.bundle-quotes .listnote { font: 14px/1.5 var(--ui); color: var(--muted); margin: 0 0 .8rem; }
+.bundle-quotes .row { display: flex; flex-wrap: wrap; gap: .5rem; }
+.bundle-quotes button {
+  font: 14px/1.2 var(--ui); color: var(--fg); background: none; border: 1px solid var(--muted);
+  border-radius: 6px; padding: .4rem .8rem; cursor: pointer;
+}
+.bundle-quotes button.primary { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+@media (pointer: coarse) { .bundle-quotes button { min-height: 2.75rem; } }
+
+/* ---------- bundles: a paper's place, and references to the other papers ---------- */
+.bar a.btn .place { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar a.btn .lbl + .place::before { content: "·"; margin-right: .3em; }
+.in-bundle { display: block; margin-top: .2rem; font: 13px/1.4 var(--ui); color: var(--muted); }
+.in-bundle a { color: var(--accent); }
 
 /* ---------- print ---------- */
 @media print {
@@ -389,3 +421,23 @@ main p, section.abstract p { margin-bottom: 1.15em; }
 :root[data-para="orig"] .chunk { display: inline; }
 :root[data-para="orig"] .chunk + .chunk { margin-top: 0; }
 :root[data-para="orig"] main p { margin-bottom: .9em; }
+
+/* ---------- on a phone the bar steps aside while reading on (reader.js) ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  .bar { transition: transform .2s ease; }
+  .progress { transition: top .2s ease; }
+}
+:root.bar-away .bar { transform: translateY(-100%); }
+:root.bar-away .progress { top: 0; }
+
+/* ---------- the way back after following a reference to another paper of the bundle ---------- */
+.bar a.back-from { color: var(--accent); border-color: var(--accent); white-space: nowrap; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+
+/* ---------- the index on a phone: off the edge, and titles get the width ---------- */
+@media (max-width: 600px) {
+  .index .bar { padding: 0 .6rem 0 1rem; }
+  .list li { grid-template-columns: 1.6rem 1fr; }
+  .list .s { grid-row: auto; grid-column: 2; }
+  .list .s:empty { display: none; }
+  .bar a.back-from { min-height: 2.25rem; min-width: 0; padding: .45rem .55rem; max-width: 45vw; margin-left: .5rem; }  /* inside the thinner bar, off the screen's edge */
+}
