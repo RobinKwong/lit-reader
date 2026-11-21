@@ -63,7 +63,7 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `--pages A-B` | Converts only these pages of a PDF, for example `--pages 12-30`. |
 | `--epub` | Also writes an EPUB copy into the same folder. |
 | `--single-file` | Also writes `<slug>.html` into the same folder: the same reading copy with its styles, script and fonts inside it, so the one file works on its own. It leaves out links to a local PDF, which wouldn't travel with it. |
-| `--email` | Also emails the EPUB to you, for Apple Books or a Kindle. `--email html` sends the single file instead. Put it after the paper. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
+| `--email` | Also emails the EPUB to you, for Apple Books or a Kindle. `--email html` sends the single file instead. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
 
 ### Emailing a copy to yourself
 

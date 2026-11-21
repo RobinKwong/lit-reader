@@ -222,7 +222,14 @@ def send(s, m):
               else smtplib.SMTP(s["host"], 587, timeout=60)) as server:
             if not tls:
                 server.starttls(context=ctx)  # never log in over an unencrypted connection
-            server.login(s["user"], s["password"])
+            server.ehlo_or_helo_if_needed()
+            if "PLAIN" in server.esmtp_features.get("auth", "").upper().split():
+                # One mechanism only. Gmail hangs up after refusing a password, so login()'s
+                # fallback to the next mechanism turns a refusal into "Connection unexpectedly closed".
+                server.user, server.password = s["user"], s["password"]
+                server.auth("PLAIN", server.auth_plain)
+            else:
+                server.login(s["user"], s["password"])
             server.send_message(m)
     except smtplib.SMTPAuthenticationError:
         raise MailError("%s refused the login for %s. Gmail and many providers need an app password, not your normal one."

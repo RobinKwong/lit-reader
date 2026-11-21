@@ -2469,10 +2469,16 @@ def cmd_build(a):
     mail_to = email_settings(a.email)
     copies, meta = build_one(a.pid, a.ledger, a.route, a.pages, part,
                              a.epub or a.email == "epub", a.single_file or a.email == "html")
+    index_error = None
     if LIST_FILE.exists():
-        cmd_index(a)
+        try:
+            cmd_index(a)
+        except ReaderError as e:  # the paper is built, so still send it, then report this
+            index_error = e
     if mail_to:  # after the index, so a failed send leaves nothing else undone
         email_copy(mail_to, copies[a.email], meta)
+    if index_error:
+        raise index_error
 
 
 def cmd_all(a):
@@ -2973,8 +2979,19 @@ def standalone_parser():
     return ap
 
 
+def email_first(argv):
+    """argv with a bare --email followed by something other than its own value
+    written as --email=epub, so `lit-reader --email paper.pdf` doesn't take the
+    paper for the copy type."""
+    out = list(argv)
+    for i, v in enumerate(out[:-1]):
+        if v == "--email" and out[i + 1] not in ("epub", "html"):
+            out[i] = "--email=epub"
+    return out
+
+
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
+    argv = email_first(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["setup-email"]:
         argparse.ArgumentParser(prog="lit-reader setup-email",
                                 description="Set up --email: asks for your address and mail server, writes them to "
