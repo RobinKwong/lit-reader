@@ -15,7 +15,7 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **Text set for reading.** By default, lines run to about 65 characters, and lit-reader adds no automatic hyphenation. Long paragraphs are split at sentence ends, and an "As published" setting restores the original breaks.
 - **Citations that open in place.** Click a citation to read the reference in a card without losing your place. Footnotes sit in the margin, except in papers built from a PDF, where they follow the paragraph.
 - **A sense of where you are.** The contents sidebar shows the minutes in each section, and the Contents button hides it when you want only the text. The top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
-- **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Page numbers come only from papers built from a PDF.
+- **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Quotes are kept in your browser, not in a file, so once you have saved some, the Quotes panel and the end of the paper remind you of any you haven't downloaded. Page numbers come only from papers built from a PDF.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
@@ -134,7 +134,7 @@ On every route, lit-reader sends an arXiv ID or DOI found on a PDF's first page 
 | Europe PMC XML | Open-access papers in Europe PMC | Real headings, linked citations and the publisher's figures. |
 | PDF | Everything else | Text converted by Docling, with the original page numbers in the margin. Figures and tables are images cropped from the page. |
 
-## What it works with
+## What else it works with
 
 lit-reader is tuned for academic papers, and it also handles other long PDFs with selectable text, such as dissertations and reports. A 370-page dissertation took about two minutes to convert on a Mac laptop.
 
@@ -190,9 +190,9 @@ v1.1 takes the reading copies off the laptop, onto a phone or an e-reader, and l
 
 - **Reading on a phone.** Pages lay out for a phone screen. Citations open in a sheet along the bottom, the contents sit in a drawer, buttons are sized for touch, and tapping a figure or table opens it full screen.
 - **Copies to take with you.** `--epub` writes an EPUB for Apple Books or a Kindle. `--single-file` writes the reading copy as one HTML file that survives being emailed and still shows its text where no script runs. `--email` sends either copy to you through your own mail account, and `lit-reader setup-email` sets that up.
-- **Saved quotes.** Select a passage and save it with its author, year and page, then copy it or download all your quotes as Markdown. A removed quote can be restored until the Quotes panel closes.
+- **Saved quotes.** Select a passage and save it with its author, year and page, then copy it or download all your quotes as Markdown. A tip on your first few papers points out the feature, the Quotes panel and the end of the paper remind you of quotes you haven't downloaded, and a removed quote can be restored until the panel closes.
 - **More of the paper, and a check on what's missing.** When arXiv has no HTML version of a paper, lit-reader tries ar5iv's conversion before the PDF. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed. Under each table from a PDF, an unchecked text version helps screen readers and small screens.
-- **Smaller changes.** On a laptop, the Contents button hides the sidebar. "Go to reference list" leaves a button back to where you were, and the contents show "6 min" rather than "6′". EPUBs aren't hyphenated, to match the reading copies.
+- **Smaller changes.** On a laptop, the Contents button hides the sidebar. "Go to reference list" leaves a button back to where you were, and the contents show "6 min" rather than "6′". "Mark as finished" sits where the main text ends, before any appendix and the references. EPUBs aren't hyphenated, to match the reading copies.
 
 ### v1.0
 

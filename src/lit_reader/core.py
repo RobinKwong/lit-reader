@@ -543,6 +543,7 @@ def render(doc, list_line=None, list_pos=None):
             sec_id = hid
             if b.get("appendix") and body:
                 body = False
+                out.append(DONE_SLOT)  # the main text ends here, and so does a reader
                 out.append('<div class="appendix-start"></div>')
             lvl = min(max(b["level"], 2), 4)
             h_html = re.sub(r"\.\s*$", "", b["html"].strip())  # run-in heads: "Control Variables." (the doc stays as it was: it may be rendered twice)
@@ -645,7 +646,9 @@ def render(doc, list_line=None, list_pos=None):
         authors=authors_html(authors), meta=" · ".join(meta_bits), why=why,
         abstracts=abstracts, body="\n".join(out), refs=refs_html, toc=toc_html,
         source=esc(doc.source), built=datetime.date.today().isoformat(),
-        panel=PANEL, all_link="" if alone else ALL_LINK, done="" if alone else DONE_BOX)
+        panel=PANEL, all_link="" if alone else ALL_LINK, done="" if alone else DONE_SLOT)
+    # the finished prompt goes where the main text ends: before any appendix, or else before the references
+    page = page.replace(DONE_SLOT, "" if alone else DONE_BOX, 1).replace(DONE_SLOT, "")
     return page, total_words
 
 
@@ -751,8 +754,9 @@ PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settin
   <div class="note">People read fastest in different fonts, and liking a font doesn't predict it (Wallace et al., 2022). It's worth trying each one for a page.</div>
 </div>"""
 
-ALL_LINK = '<a class="btn" href="index.html">All papers</a>'
+ALL_LINK = '<a class="btn" href="index.html" aria-label="All papers"><span aria-hidden="true">←</span><span class="lbl"> All papers</span></a>'
 DONE_BOX = '<div class="done-box">Reached the end? <button id="mark-done" type="button">Mark as finished</button> It shows on the list of papers.</div>'
+DONE_SLOT = "<!-- lit-reader: end of the main text -->"
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -768,10 +772,10 @@ PAGE = """<!doctype html>
 <body data-pid="{pid}" data-cite="{cite}" data-reference="{reference}">
 <a class="skip" href="#text-start">Skip to the text</a>
 <div class="bar">
+  {all_link}
   <button id="toc-toggle" type="button" aria-expanded="false" aria-controls="toc" aria-label="Contents"><span aria-hidden="true">☰</span><span class="lbl"> Contents</span></button>
   <a class="nojs-toc" href="#toc" aria-label="Contents"><span aria-hidden="true">☰</span><span class="lbl"> Contents</span></a>
   <span class="where" id="where">{where}</span>
-  {all_link}
   <button id="clips" type="button" aria-expanded="false" aria-controls="clips-panel">Quotes <span id="clip-count"></span></button>
   <button id="aa" type="button" aria-label="Aa, reading settings" aria-expanded="false" aria-controls="panel">Aa</button>
 </div>
@@ -792,8 +796,8 @@ PAGE = """<!doctype html>
 {abstracts}
 {body}
 <div id="end-of-body"></div>
-{refs}
 {done}
+{refs}
 <footer class="source">{source} Built {built}.</footer>
 </main>
 </div>

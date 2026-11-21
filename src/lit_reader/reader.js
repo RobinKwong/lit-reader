@@ -176,6 +176,13 @@
     });
     li.appendChild(b);
   }
+  function goToRef(li, byPointer) {  // the default jump to #ref-… happens after, from the link itself
+    var from = cardFrom, fromY = window.scrollY;
+    closeCard(); li.classList.add("flash"); setTimeout(function () { li.classList.remove("flash"); }, 1600);
+    var det = li.closest("details"); if (det) det.open = true;
+    offerWayBack(li, from, fromY);
+    li.tabIndex = -1; setTimeout(function () { focusQuietly(li, byPointer); }, 30);
+  }
   function openCard(a, moveFocus) {
     closeCard();
     cardFrom = a;
@@ -195,13 +202,7 @@
       d.querySelectorAll(".ref-back").forEach(function (b) { b.remove(); });
       var go = document.createElement("a");
       go.href = "#ref-" + id; go.className = "go"; go.textContent = "Go to reference list";
-      go.addEventListener("click", function (e) {
-        var from = cardFrom, fromY = window.scrollY;
-        closeCard(); li.classList.add("flash"); setTimeout(function () { li.classList.remove("flash"); }, 1600);
-        var det = li.closest("details"); if (det) det.open = true;
-        offerWayBack(li, from, fromY);
-        li.tabIndex = -1; setTimeout(function () { focusQuietly(li, e.detail > 0); }, 30);
-      });
+      go.addEventListener("click", function (e) { goToRef(li, e.detail > 0); });
       d.appendChild(go);
       card.appendChild(d);
     });
@@ -231,6 +232,12 @@
   });
   document.addEventListener("click", function (e) {
     var a = e.target.closest("a.cite");
+    if (a && card && cardFrom === a && e.detail > 0) {  // hovering already opened its card: a click goes on to the reference
+      var go = card.querySelector("a.go"), li = go && document.getElementById(go.getAttribute("href").slice(1));
+      if (li) { e.preventDefault(); goToRef(li, true);
+        if (location.hash === "#" + li.id) li.scrollIntoView(); else location.hash = li.id;  // as the card's own link does
+        return; }
+    }
     if (a) { e.preventDefault(); openCard(a, e.detail === 0); return; }  // detail 0: opened from the keyboard
     if (card && !card.contains(e.target)) closeCard();
   });
@@ -305,6 +312,44 @@
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
     else done(fallback());
   }
+  var EXPORTED_KEY = "litreader.clipsExported." + pid;  // when this paper's quotes were last downloaded or copied
+  function notExported() {
+    var at = load(EXPORTED_KEY, "");
+    return clips.filter(function (c) { return !at || c.at > at; }).length;
+  }
+  function markExported() {
+    save(EXPORTED_KEY, new Date().toISOString());
+    var open = clipsPanel && !clipsPanel.hidden;
+    renderClips();
+    if (open) { var b = clipsPanel.querySelector(".row button"); if (b) b.focus(); }  // the clicked button was redrawn
+  }
+  function download() {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([asMarkdown()], { type: "text/markdown" }));
+    a.download = "quotes-" + (document.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "paper") + ".md";
+    a.addEventListener("click", function (e) { e.stopPropagation(); });  // not a click outside the Quotes panel
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    markExported();
+  }
+  function quotesWord(n) { return n === 1 ? "1 quote" : n + " quotes"; }
+  // At the end of the main text: a reminder, only when there are quotes not yet downloaded.
+  var doneQuotes = null;
+  function showDoneQuotes() {
+    var box = document.querySelector(".done-box");
+    if (!box) return;
+    var n = notExported();
+    if (!n) { if (doneQuotes) { doneQuotes.remove(); doneQuotes = null; } return; }
+    if (!doneQuotes) {
+      doneQuotes = document.createElement("p"); doneQuotes.className = "done-quotes";
+      var s = document.createElement("span"), b = document.createElement("button");
+      b.type = "button"; b.textContent = "Download";
+      b.addEventListener("click", download);
+      doneQuotes.appendChild(s); doneQuotes.appendChild(document.createTextNode(" ")); doneQuotes.appendChild(b);
+      box.appendChild(doneQuotes);
+    }
+    doneQuotes.firstChild.textContent = "You saved " + quotesWord(n) + " from this paper that you haven't downloaded. " + (n === 1 ? "It's" : "They're") + " kept only in this browser.";
+  }
   function hideSave() { if (saveBtn) { saveBtn.remove(); saveBtn = null; } pending = null; }
   function saveClip() {
     if (!pending) return;
@@ -316,11 +361,34 @@
     hideSave();
     var sel = window.getSelection(); if (sel) sel.removeAllRanges();
     renderClips();
-    toast(stored ? "<span>Quote saved. Open Quotes in the top bar to copy it with its citation.</span>"
-                 : "<span>This browser won't keep quotes for local pages, so they last only until you close this tab. Open Quotes to copy or download them now.</span>", stored ? 4000 : 9000);
+    var first = !load(HINT_KEY, {}).saved;
+    save(HINT_KEY, { done: true, saved: true });  // they know about quotes now: no more tips
+    var n = notExported();
+    toast(!stored ? "<span>This browser won't keep quotes for local pages, so they last only until you close this tab. Open Quotes to copy or download them now.</span>"
+          : first ? "<span>Quote saved in this browser. Open Quotes in the top bar to copy it with its citation, or download your quotes as a file to keep.</span>"
+          : n >= 3 ? "<span>Quote saved. " + quotesWord(n) + " from this paper aren't downloaded yet. Open Quotes to download them.</span>"
+          : "<span>Quote saved.</span>", stored ? (first || n >= 3 ? 6000 : 2500) : 9000);
   }
+  /* A tip, on the first few papers someone scrolls through, that passages can be saved.
+     Selecting text is the only way in, and nothing on the page shows it otherwise. */
+  var HINT_KEY = "litreader.quoteHint", hintChecked = false;
+  function maybeHint() {
+    if (hintChecked || !clipsBtn || !hintReady || window.scrollY < window.innerHeight * 1.5) return;
+    if (document.querySelector(".toast")) return;  // after "Resumed where you left off", not instead of it
+    hintChecked = true;
+    var h = load(HINT_KEY, {}), seen = Array.isArray(h.papers) ? h.papers : [];
+    if (h.done || clips.length || seen.indexOf(pid) >= 0 || seen.length >= 3) return;
+    seen.push(pid); save(HINT_KEY, { papers: seen });
+    var t = toast(touch ? "<span>Tip: press and hold on a passage to select it, then tap Save quote. It keeps the page and citation.</span> <button type=\"button\">Got it</button>"
+                        : "<span>Tip: select a passage and press Q, or choose Save quote, to keep it with its page and citation.</span> <button type=\"button\">Got it</button>", 12000);
+    t.querySelector("button").addEventListener("click", function () { save(HINT_KEY, { done: true }); t.remove(); });
+  }
+  var hintReady = false;  // the jump back to a saved position isn't the reader scrolling
+  setTimeout(function () { hintReady = true; }, 2000);
+  if (clipsBtn) window.addEventListener("scroll", maybeHint, { passive: true });
   function renderClips() {
     if (clipCount) clipCount.textContent = clips.length ? "(" + clips.length + ")" : "";
+    showDoneQuotes();
     if (!clipsPanel) return;
     clipsPanel.innerHTML = "";
     var h = document.createElement("div"); h.className = "clips-head";
@@ -333,18 +401,20 @@
       clipsPanel.appendChild(p);
       return;
     }
+    if (clips.length) {
+      var n = notExported(), kept = document.createElement("p"); kept.className = "note clips-kept";
+      kept.textContent = !stored ? "This browser isn't keeping these: they go when you close this tab. Download them to keep them."
+                       : n ? "These are kept only in this browser. " + (n === clips.length ? "None downloaded yet." : quotesWord(n) + " not downloaded yet.")
+                       : "Kept in this browser, and all downloaded.";
+      clipsPanel.appendChild(kept);
+    }
     var all = document.createElement("div"); all.className = "row";
     if (!clips.length) all.hidden = true;
-    [["Copy all", function () { copy(asMarkdown()); }],
-     ["Download as Markdown", function () {
-       var a = document.createElement("a");
-       a.href = URL.createObjectURL(new Blob([asMarkdown()], { type: "text/markdown" }));
-       a.download = "quotes-" + (document.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "paper") + ".md";
-       document.body.appendChild(a); a.click(); a.remove();
-       setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
-     }]].forEach(function (x) {
+    [["Download as Markdown", download],
+     ["Copy all", function () { copy(asMarkdown()); markExported(); }]].forEach(function (x, i) {
       var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
-      b.addEventListener("click", x[1]); all.appendChild(b);
+      if (i === 0) b.className = "primary";
+      b.addEventListener("click", function (e) { e.stopPropagation(); x[1](); }); all.appendChild(b);
     });
     clipsPanel.appendChild(all);
     var ol = document.createElement("ol"); ol.className = "clips";
@@ -607,6 +677,7 @@
   live.className = "sr"; live.setAttribute("role", "status");
   document.body.appendChild(live);
   function toast(html, ms) {
+    document.querySelectorAll(".toast").forEach(function (o) { o.remove(); });  // one at a time: they share a place
     var t = document.createElement("div"); t.className = "toast"; t.innerHTML = html;
     document.body.appendChild(t); setTimeout(function () { t.remove(); }, ms || 5000);
     setTimeout(function () { live.textContent = t.firstChild.textContent; }, 100);
