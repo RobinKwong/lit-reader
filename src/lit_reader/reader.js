@@ -232,7 +232,7 @@
   });
   document.addEventListener("click", function (e) {
     var a = e.target.closest("a.cite");
-    if (a && card && cardFrom === a && e.detail > 0) {  // hovering already opened its card: a click goes on to the reference
+    if (a && !touch && card && cardFrom === a && e.detail > 0) {  // hovering already opened its card: a click goes on to the reference
       var go = card.querySelector("a.go"), li = go && document.getElementById(go.getAttribute("href").slice(1));
       if (li) { e.preventDefault(); goToRef(li, true);
         if (location.hash === "#" + li.id) li.scrollIntoView(); else location.hash = li.id;  // as the card's own link does
@@ -300,7 +300,7 @@
     });
     return out.join("\n");
   }
-  function copy(text) {
+  function copy(text, then) {
     function fallback() {
       var t = document.createElement("textarea"), ok = false; t.value = text; t.setAttribute("readonly", "");
       t.style.position = "fixed"; t.style.opacity = "0"; document.body.appendChild(t); t.select();
@@ -308,20 +308,26 @@
       t.remove();
       return ok;
     }
-    function done(ok) { toast(ok ? "<span>Copied.</span>" : "<span>Couldn't copy. Use Download as Markdown instead.</span>", ok ? 2500 : 5000); }
+    function done(ok) { if (ok && then) then(); toast(ok ? "<span>Copied.</span>" : "<span>Couldn't copy. Use Download as Markdown instead.</span>", ok ? 2500 : 5000); }
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(fallback()); });
     else done(fallback());
   }
   var EXPORTED_KEY = "litreader.clipsExported." + pid;  // when this paper's quotes were last downloaded or copied
+  var exportedAt = "";  // also kept here, for a browser that won't store it
   function notExported() {
-    var at = load(EXPORTED_KEY, "");
+    var at = load(EXPORTED_KEY, "") || exportedAt;
     return clips.filter(function (c) { return !at || c.at > at; }).length;
   }
   function markExported() {
-    save(EXPORTED_KEY, new Date().toISOString());
-    var open = clipsPanel && !clipsPanel.hidden;
+    exportedAt = new Date().toISOString(); save(EXPORTED_KEY, exportedAt);
+    var open = clipsPanel && !clipsPanel.hidden, from = document.activeElement, label = from && from.textContent;
+    var inDone = doneQuotes && doneQuotes.contains(from);
     renderClips();
-    if (open) { var b = clipsPanel.querySelector(".row button"); if (b) b.focus(); }  // the clicked button was redrawn
+    if (open && !inDone) {  // the clicked button was redrawn: back to the same one
+      var b = [].filter.call(clipsPanel.querySelectorAll(".row button"), function (x) { return x.textContent === label; })[0];
+      if (b) b.focus();
+    }
+    if (inDone && doneBtn) doneBtn.focus();  // the reminder and its button are gone
   }
   function download() {
     var a = document.createElement("a");
@@ -348,7 +354,9 @@
       doneQuotes.appendChild(s); doneQuotes.appendChild(document.createTextNode(" ")); doneQuotes.appendChild(b);
       box.appendChild(doneQuotes);
     }
-    doneQuotes.firstChild.textContent = "You saved " + quotesWord(n) + " from this paper that you haven't downloaded. " + (n === 1 ? "It's" : "They're") + " kept only in this browser.";
+    doneQuotes.firstChild.textContent = "You saved " + quotesWord(n) + " from this paper that you haven't downloaded. " + (
+      !stored ? "This browser isn't keeping " + (n === 1 ? "it" : "them") + ": " + (n === 1 ? "it goes" : "they go") + " when you close this tab."
+              : (n === 1 ? "It's" : "They're") + " kept only in this browser.");
   }
   function hideSave() { if (saveBtn) { saveBtn.remove(); saveBtn = null; } pending = null; }
   function saveClip() {
@@ -411,7 +419,7 @@
     var all = document.createElement("div"); all.className = "row";
     if (!clips.length) all.hidden = true;
     [["Download as Markdown", download],
-     ["Copy all", function () { copy(asMarkdown()); markExported(); }]].forEach(function (x, i) {
+     ["Copy all", function () { copy(asMarkdown(), markExported); }]].forEach(function (x, i) {
       var b = document.createElement("button"); b.type = "button"; b.textContent = x[0];
       if (i === 0) b.className = "primary";
       b.addEventListener("click", function (e) { e.stopPropagation(); x[1](); }); all.appendChild(b);

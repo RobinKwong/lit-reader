@@ -1829,13 +1829,15 @@ def docling_doc(meta, d, pages=None):
     front_dropped = []
     seen_head = [False]
     summary = [None]  # None, then "open" under a page-one summary, then "closed"
+    pending_label = [None]  # the run-in label of the held summary paragraph
     chapter_pre = [None]
 
     def flush():
         nonlocal pending
         if pending is not None:
-            doc.add(t="p", html=esc(pending))
+            doc.add(t="p", html=("<b>%s:</b> " % esc(pending_label[0]) if pending_label[0] else "") + esc(pending))
             pending = None
+            pending_label[0] = None
         while deferred:
             fn = deferred.pop(0)
             fn["block"] = {"t": "p", "html": "<small>%s</small>" % esc(fn["text"])}
@@ -1907,6 +1909,7 @@ def docling_doc(meta, d, pages=None):
             if not cap_text and pending and len(pending) < 400 and CAPTION_LIKE.match(pending):
                 cm = CAPTION_LIKE.match(pending)  # the caption above the float, left as a paragraph
                 lab, cap_text, pending = cm.group(1), cm.group(2).strip(), None
+                pending_label[0] = None  # the held text was a caption, not a labelled summary part
             caption = esc(cap_text)
             gm = TABLE_NOTE_GLUED.search(pending) if (pending and kind == "tables") else None
             if gm:  # Docling sometimes glues a table note onto the sentence the table cuts
@@ -1979,7 +1982,7 @@ def docling_doc(meta, d, pages=None):
         surnames = [a.split()[-1] for a in doc.meta.get("authors") or [] if a.split()]
         if not in_refs and p and p <= 2 and len(text) < 800 and len(surnames) >= 3 and sum(1 for s in surnames if s in text) >= 3:
             continue  # the author line, with affiliation marks; the header shows the authors
-        if not in_refs and p and p <= 2 and len(text) < 1200 and len(re.findall(r"(?:^|\.\s+)\d{1,2}\s+[A-Z]", text)) >= 2 \
+        if not in_refs and not seen_head[0] and p and p <= 2 and len(text) < 1200 and len(re.findall(r"(?:^|\.\s+)\d{1,2}\s+[A-Z]", text)) >= 2 \
                 and re.match(r"1\s", text) and re.search(r"\b(Universit|Institut|College|School|Department|Laborator|Centre|Center)", text):
             front_dropped.append(text)  # a numbered affiliation list ("1 Google DeepMind, London, UK. 2 …"), set mid-column
             continue
@@ -2014,13 +2017,22 @@ def docling_doc(meta, d, pages=None):
             deferred.append(last_fn[0])  # after the paragraph it interrupts, not inside it
             continue
         lab = SUMMARY_LABEL.match(text) if not seen_head[0] and label in ("text", "paragraph") else None
-        if lab:  # Science's page-one summary: "INTRODUCTION: …", "RATIONALE: …", with no heading over it
+        if lab and re.fullmatch(r"KEY ?WORDS", lab.group(1).strip()):
+            lab = None
+        if lab:  # a page-one summary in run-in labels: Science's "INTRODUCTION: …", "RATIONALE: …", with no heading over it
             flush()
             if not summary[0]:
                 page_marker(p)
-                doc.add(t="h", level=2, html="Summary")
+                doc.add(t="h", level=2, html="Abstract" if lab.group(1).strip() == "ABSTRACT" else "Summary")
                 summary[0] = "open"
-            doc.add(t="p", html="<b>%s:</b> %s" % (esc(lab.group(1).capitalize()), esc(text[lab.end():])))
+            pending = text[lab.end():]  # held, so a part split at a column can still be joined
+            pending_label[0] = None if lab.group(1).strip() == "ABSTRACT" else lab.group(1).strip().capitalize()
+            continue
+        if summary[0] == "open" and pending is not None and pending_label[0] and label in ("text", "paragraph") \
+                and not re.search(r"[.!?:;”\"')\]]$", pending) and re.match(r"^[a-z(]", text):
+            pending = dehyphen(pending, text) if pending.endswith("-") else pending + " " + text
+            if p != last_page:
+                page_marker(p)
             continue
         if summary[0] == "open" and not seen_head[0] and label in ("text", "paragraph") and len(text.split()) >= 40:
             flush()  # the article proper starts here, untitled; without a heading it would sit inside the summary
