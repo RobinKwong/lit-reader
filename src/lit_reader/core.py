@@ -26,7 +26,6 @@ Ledger commands read their paths from a settings file, by default
 ~/.config/lit-reader/config.toml (LIT_READER_CONFIG points elsewhere):
   output_dir = "~/papers/reader"         required
   list_file = "~/papers/list.json"       default: list.json in output_dir
-  must_read_file = "~/papers/reading.md" optional
   lit_cache = "~/.cache/lit"             optional
   index_bar, index_kicker, index_note    optional wording for the index page
   [ledgers]
@@ -37,7 +36,7 @@ Ledger commands read their paths from a settings file, by default
 
   fetch  --route arxiv|jats --pid PID --ledger DB   download the structured source (online)
   pdf-convert --pid PID --ledger DB [--pages A-B]   run Docling on the cached PDF (offline)
-  build  --pid PID --ledger DB --route R [--list-n N] [--pages A-B]   write the page (offline)
+  build  --pid PID --ledger DB --route R [--pages A-B]   write the page (offline)
   index                                              write index.html from list.json
   all                                                build every list.json entry that has a route
 
@@ -88,7 +87,6 @@ SRC = WORK / "src"
 FONTS = HERE / "fonts"
 OUT = None              # the settings below fill these in for the ledger commands
 LIST_FILE = None
-PROJECT_READING = None
 LEDGERS = {}
 INDEX_TEXT = {"index_bar": "Reading copies", "index_kicker": "Papers", "index_note": ""}
 WPM = 200  # must match reader.js
@@ -121,14 +119,13 @@ def read_settings(path):
 
 def apply_settings():
     """Load the paths the ledger commands need. Standalone builds never call this."""
-    global OUT, LIST_FILE, PROJECT_READING, LIT_CACHE
+    global OUT, LIST_FILE, LIT_CACHE
     conf = read_settings(CONFIG) if CONFIG.is_file() else {}
     out = os.environ.get("LIT_READER_OUT") or conf.get("output_dir")
     if not out:
         raise ReaderError("ledger commands need a settings file with output_dir: %s" % CONFIG)
     OUT = Path(out).expanduser()
     LIST_FILE = Path(conf["list_file"]).expanduser() if conf.get("list_file") else OUT / "list.json"
-    PROJECT_READING = Path(conf["must_read_file"]).expanduser() if conf.get("must_read_file") else None
     if conf.get("lit_cache") and not os.environ.get("LIT_CACHE"):
         LIT_CACHE = Path(conf["lit_cache"]).expanduser()
     LEDGERS.update(conf.get("ledgers") or {})
@@ -496,7 +493,7 @@ def pdf_link(doc, page):
     return '<a class="pdf-link" href="%s#page=%d" target="_blank" rel="noopener">open page %d of the PDF</a>' % (attr(pdf_href(doc)), page, page)
 
 
-def render(doc, list_line=None, list_pos=None):
+def render(doc):
     """Doc -> page HTML."""
     m = doc.meta
     out, toc = [], []
@@ -623,9 +620,6 @@ def render(doc, list_line=None, list_pos=None):
         meta_bits.append('<a href="%s" target="_blank" rel="noopener">%s</a>' % (attr(m["url"]), esc(m["url"])))
     main_mins = max(1, round(main_words(doc) / float(WPM)))
     meta_bits.append("about %d min of reading in the main text" % main_mins)
-    why = ""
-    if list_line:
-        why = '<div class="why"><b>%s</b> %s</div>' % (esc(list_pos or "On your list"), list_line)
 
     alone = bool(m.get("standalone") or m.get("single_file"))  # a single file has no list of papers beside it
     back = '<ol class="back"><li><a href="#top">↑ Back to the start</a></li>%s</ol>' % (
@@ -643,7 +637,7 @@ def render(doc, list_line=None, list_pos=None):
         kicker=esc(" · ".join(x for x in [m.get("kicker")] if x) or "Reading copy"),
         title_html=m.get("title_html") or esc(m.get("title", "")),
         part=('<p class="part">%s</p>' % esc(m["part"])) if m.get("part") else "",
-        authors=authors_html(authors), meta=" · ".join(meta_bits), why=why,
+        authors=authors_html(authors), meta=" · ".join(meta_bits),
         abstracts=abstracts, body="\n".join(out), refs=refs_html, toc=toc_html,
         source=esc(doc.source), built=datetime.date.today().isoformat(),
         panel=PANEL, all_link="" if alone else ALL_LINK, done="" if alone else DONE_SLOT)
@@ -791,7 +785,6 @@ PAGE = """<!doctype html>
   {part}
   {authors}
   <div class="meta">{meta}</div>
-  {why}
 </header>
 {abstracts}
 {body}
@@ -860,27 +853,6 @@ def slug(meta):
     title = "-".join([w for w in title.split("-") if w][:4])
     return "%s-%s-%s" % (re.sub(r"[^a-z0-9]", "", first), meta.get("year") or "", title)
 
-
-def list_entry(n):
-    """The must-read line as written in the must-read file, minus the
-    sentences about access, which are bookkeeping, not reading guidance."""
-    if not PROJECT_READING or not PROJECT_READING.exists():
-        return None
-    text = PROJECT_READING.read_text(encoding="utf-8")
-    sec = re.search(r"## Must-read list.*?\n(.*?)(?:\n## |\Z)", text, re.S)
-    if not sec:
-        return None
-    m = re.search(r"^%d\. (.+)$" % n, sec.group(1), re.M)
-    if not m:
-        return None
-    line = m.group(1)
-    sents = re.split(r"(?<=[.)])\s+(?=[A-Z(])", line)
-    keep = [s for s in sents if not re.match(r"(Open access|Paywalled|Full text held|\()", s)]
-    line = " ".join(keep).strip()
-    h = esc(line)
-    h = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", h)
-    h = re.sub(r"`([^`]+)`", r"<code>\1</code>", h)
-    return h
 
 
 # --------------------------------------------------------------------------
@@ -1856,6 +1828,7 @@ def docling_doc(meta, d, pages=None):
     last_fn = [None]  # the latest footnote, which may run on to the next page
     front_dropped = []
     seen_head = [False]
+    summary = [None]  # None, then "open" under a page-one summary, then "closed"
     chapter_pre = [None]
 
     def flush():
@@ -2006,6 +1979,10 @@ def docling_doc(meta, d, pages=None):
         surnames = [a.split()[-1] for a in doc.meta.get("authors") or [] if a.split()]
         if not in_refs and p and p <= 2 and len(text) < 800 and len(surnames) >= 3 and sum(1 for s in surnames if s in text) >= 3:
             continue  # the author line, with affiliation marks; the header shows the authors
+        if not in_refs and p and p <= 2 and len(text) < 1200 and len(re.findall(r"(?:^|\.\s+)\d{1,2}\s+[A-Z]", text)) >= 2 \
+                and re.match(r"1\s", text) and re.search(r"\b(Universit|Institut|College|School|Department|Laborator|Centre|Center)", text):
+            front_dropped.append(text)  # a numbered affiliation list ("1 Google DeepMind, London, UK. 2 …"), set mid-column
+            continue
         if not seen_head[0] and len(text.split()) < 25 and not re.match(r"keywords\b", text, re.I) and (
                 not re.search(r"[.?!]$", text) or "@" in text or re.search(r"10\.\d{4,}/", text)):
             front_dropped.append(text)  # front matter before the first heading: affiliations, article type, DOI lines
@@ -2036,6 +2013,20 @@ def docling_doc(meta, d, pages=None):
             last_fn[0] = {"text": text, "page": p}
             deferred.append(last_fn[0])  # after the paragraph it interrupts, not inside it
             continue
+        lab = SUMMARY_LABEL.match(text) if not seen_head[0] and label in ("text", "paragraph") else None
+        if lab:  # Science's page-one summary: "INTRODUCTION: …", "RATIONALE: …", with no heading over it
+            flush()
+            if not summary[0]:
+                page_marker(p)
+                doc.add(t="h", level=2, html="Summary")
+                summary[0] = "open"
+            doc.add(t="p", html="<b>%s:</b> %s" % (esc(lab.group(1).capitalize()), esc(text[lab.end():])))
+            continue
+        if summary[0] == "open" and not seen_head[0] and label in ("text", "paragraph") and len(text.split()) >= 40:
+            flush()  # the article proper starts here, untitled; without a heading it would sit inside the summary
+            page_marker(p)
+            doc.add(t="h", level=2, html="Introduction")
+            summary[0] = "closed"
         if label == "formula":
             flush()
             doc.add(t="eq", html=esc(text))
@@ -2062,6 +2053,7 @@ def docling_doc(meta, d, pages=None):
     return doc
 
 
+SUMMARY_LABEL = re.compile(r"^((?:[A-Z]{3,} ?){1,3}):\s+(?=\S)")  # "INTRODUCTION: ", "RATIONALE: "
 FRONT_MATTER_SHARE = 0.25  # end matter can't begin before this share of the document's words
 TABLE_NOTE = re.compile(r"^(Notes?[:.]\s|Sources?:\s|[A-Z][A-Za-z]{0,5}: [A-Z]?[a-z]|[*∗†‡]+\s?p\s?[<=≤])")
 CAPTION_LIKE = re.compile(r"^((?:Fig(?:ure)?|Table|TABLE|FIGURE)\.?\s*[A-Z]?\d+(?:\.\d+)?[.:])\s*(.+)$", re.S)
@@ -2070,7 +2062,7 @@ TABLE_NOTE_GLUED = re.compile(r"(?<=[a-z,]) ((?:[A-Z]{1,5}: [a-z][a-z ,()-]{2,80
 FURNITURE = re.compile(
     r"^(research article( summary)?|research articles?|reports?|reviews?|perspectives?|artificial intelligence|"
     r"read the full article at|view the article online|permissions|use of this article is subject to.*|"
-    r"cite this article as.*|downloaded from .*|this article is protected by copyright.*|"
+    r"cite this article as.*|the list of author affiliations is available in the full article online.*|downloaded from .*|this article is protected by copyright.*|"
     r"routledge|taylor & francis group|check for updates|open n? ?access)$", re.I)
 
 
@@ -2336,10 +2328,10 @@ def page_image(pdf, page):
         return out.read_bytes() if r.returncode == 0 and out.exists() else None
 
 
-def finish_page(doc, meta, pages=None, list_line=None, list_pos=None):
+def finish_page(doc, meta, pages=None):
     """Render the page, check its coverage, and render again with the printed
     page offered wherever prose went missing. Returns (html, words, coverage)."""
-    page, total = render(doc, list_line, list_pos)
+    page, total = render(doc)
     cov = coverage(page, meta, pages, report=False)
     if cov and doc.pdf and shutil.which("pdftoppm") and any(b["t"] == "page" for b in doc.blocks):
         for p in weak_pages(cov):
@@ -2347,7 +2339,7 @@ def finish_page(doc, meta, pages=None, list_line=None, list_pos=None):
             if u:
                 doc.page_images[p] = u
         if doc.page_images:
-            page, total = render(doc, list_line, list_pos)
+            page, total = render(doc)
     return page, total, cov
 
 
@@ -2414,17 +2406,17 @@ def inline_assets(page):
     return page
 
 
-def single_file_copy(doc, list_line=None, list_pos=None):
+def single_file_copy(doc):
     """A copy of the page that needs nothing beside it, to send to a phone."""
     doc.meta["single_file"] = True
     try:
-        page, _ = render(doc, list_line, list_pos)
+        page, _ = render(doc)
     finally:
         doc.meta.pop("single_file", None)
     return inline_assets(page)
 
 
-def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part=None, epub=False, single=False):
+def build_one(pid, ledger, route, pages=None, part=None, epub=False, single=False):
     """Returns ({"epub": path, "html": path}, meta): the copies written this run, None where not written."""
     meta = ledger_meta(ledger, pid)
     d = SRC / slug(meta)
@@ -2437,16 +2429,14 @@ def build_one(pid, ledger, route, list_n=None, list_total=None, pages=None, part
     else:
         raise ReaderError("unknown route %s" % route)
     doc.meta["part"] = part
-    line = list_entry(list_n) if list_n else None
-    pos = ("Must-read %d of %d" % (list_n, list_total)) if list_n and list_total else None
-    page, total, cov = finish_page(doc, meta, pages, line, pos)
+    page, total, cov = finish_page(doc, meta, pages)
     write_assets()
     name = slug(meta) + ".html"
     (OUT / name).write_text(page, encoding="utf-8")
     print("wrote %s (%d words, %d references, %d notes)" % (OUT / name, total, len(doc.refs), doc.nnotes))
     report_coverage(cov, doc)
     epub_path = write_epub_copy(page, meta, OUT / (slug(meta) + ".epub")) if epub else None
-    single_path = write_single_copy(doc, OUT / "single-file" / name, line, pos) if single else None
+    single_path = write_single_copy(doc, OUT / "single-file" / name) if single else None
     return {"epub": epub_path, "html": single_path}, doc.meta
 
 
@@ -2458,16 +2448,14 @@ def load_list():
 
 def cmd_build(a):
     lst = load_list() if LIST_FILE.exists() else {"lists": []}
-    total, part = None, None
+    part = None
     for L in lst["lists"]:
         for it in L["items"]:
             if it["pid"] == a.pid and L.get("name") == "Must-read":
-                total = len(L["items"])
-                a.list_n = a.list_n or it.get("n")
                 a.pages = a.pages or it.get("pages")
                 part = it.get("part")
     mail_to = email_settings(a.email)
-    copies, meta = build_one(a.pid, a.ledger, a.route, a.list_n, total, a.pages, part,
+    copies, meta = build_one(a.pid, a.ledger, a.route, a.pages, part,
                              a.epub or a.email == "epub", a.single_file or a.email == "html")
     if LIST_FILE.exists():
         cmd_index(a)
@@ -2481,8 +2469,7 @@ def cmd_all(a):
         for it in L["items"]:
             if it.get("route"):
                 try:
-                    build_one(it["pid"], it["ledger"], it["route"], it.get("n") if L["name"] == "Must-read" else None,
-                              len(L["items"]), it.get("pages"), it.get("part"), a.epub, a.single_file)
+                    build_one(it["pid"], it["ledger"], it["route"], it.get("pages"), it.get("part"), a.epub, a.single_file)
                 except ReaderError as e:
                     print("skipped %s: %s" % (it["pid"], e))
     cmd_index(a)
@@ -2917,9 +2904,9 @@ def write_epub_copy(page, meta, path):
     return path
 
 
-def write_single_copy(doc, path, list_line=None, list_pos=None):
+def write_single_copy(doc, path):
     try:
-        page = single_file_copy(doc, list_line, list_pos)
+        page = single_file_copy(doc)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(page, encoding="utf-8")
     except Exception as e:  # as with the EPUB: the main copy is already written, and one failure shouldn't stop a batch
@@ -3008,7 +2995,6 @@ def main(argv=None):
     b.add_argument("--pid", required=True)
     b.add_argument("--ledger", required=True)
     b.add_argument("--route", choices=["arxiv", "jats", "pdf"], required=True)
-    b.add_argument("--list-n", type=int)
     b.add_argument("--pages")
     b.add_argument("--epub", action="store_true")
     b.add_argument("--single-file", action="store_true", help=SINGLE_HELP + ", in single-file/")

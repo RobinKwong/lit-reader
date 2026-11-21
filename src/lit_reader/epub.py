@@ -36,7 +36,7 @@ h3 { font-size: 1.1em; margin: 1.3em 0 .4em; }
 h4 { font-size: 1em; font-style: italic; }
 p { margin: 0 0 .8em; text-indent: 0; }
 p.cont { margin-top: -.4em; }
-.kicker, .meta, .source, .why { font-size: .85em; }
+.kicker, .meta, .source { font-size: .85em; }
 .authors { font-weight: bold; }
 div.pg { font-size: .75em; color: #777; text-align: right; margin: .2em 0; }
 div.table-text { font-size: .85em; margin: 0 0 1.2em; }
@@ -284,7 +284,7 @@ def build(page_html, meta):
         if "abstract" in k.cls():
             parts.append(w.kids(k))
         else:
-            cls = [x for x in ("authors", "meta", "why", "part") if x in k.cls()]
+            cls = [x for x in ("authors", "meta", "part") if x in k.cls()]
             inner = w.kids(k)
             if inner.strip():
                 parts.append('<p%s>%s</p>' % (' class="%s"' % cls[0] if cls else "", inner))

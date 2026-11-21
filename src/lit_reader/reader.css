@@ -158,11 +158,6 @@ header.paper .authors { color: var(--fg); margin: 0 0 .5em; font-family: var(--u
 @media print { .au-rest[hidden] { display: inline !important; } .au-toggle { display: none; } }
 header.paper .part { font: 600 16px/1.45 var(--ui); color: var(--fg); margin: -.2em 0 .6em; }
 header.paper .meta { font: 14px/1.5 var(--ui); color: var(--muted); }
-.why {
-  margin: 1.4rem 0 0; padding: .8rem 1rem; border-left: 3px solid var(--accent);
-  background: var(--card); font: 14.5px/1.5 var(--ui); border-radius: 0 6px 6px 0;
-}
-.why b { font-weight: 600; }
 
 /* ---------- body text ---------- */
 main p, main li { hyphens: manual; -webkit-hyphens: manual; text-wrap: pretty; text-align: left; }
