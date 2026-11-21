@@ -1,6 +1,6 @@
 # lit-reader
 
-lit-reader turns an academic paper into an offline HTML reading copy, with reflowed text, a contents sidebar, citation cards, sidenotes and a saved reading position.
+lit-reader turns an academic paper into an offline HTML reading copy, with reflowed text, a contents sidebar, citation cards, sidenotes and a saved reading position. It can also build a set of papers into one folder, with an index and links between them.
 
 ![A paper in lit-reader, with a citation card open beside the text and a contents sidebar showing the minutes in each section](docs/screenshot.png)
 
@@ -8,7 +8,7 @@ lit-reader turns an academic paper into an offline HTML reading copy, with reflo
 
 ## Why lit-reader
 
-Most academic papers are published as PDFs laid out for print, which makes them hard work to read on a laptop. lit-reader is for researchers, students, journalists and anyone else who reads papers closely on a screen. It resets the paper for long reading and never summarises or rewrites it. Conversion can still lose or garble text, so lit-reader reports how much of the text reached the page.
+Most academic papers are published as PDFs laid out for print, which makes them hard work to read on a laptop. lit-reader is for researchers, students, journalists and anyone else who reads papers closely on a screen. It resets the paper for long reading and never summarises or rewrites it. Conversion can still lose or garble text, so lit-reader reports how much of the text reached the page. That check catches lost text but can't tell when text is out of order.
 
 Unlike most PDF viewers, which show you the printed page, lit-reader reflows the text from PDFs and adds tools for reading it:
 
@@ -17,13 +17,14 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **A sense of where you are.** The contents sidebar shows the minutes in each section, and the Contents button hides it when you want only the text. The top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
 - **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Quotes are kept in your browser, not in a file, so once you have saved some, the Quotes panel and the end of the paper remind you of any you haven't downloaded. Page numbers come only from papers built from a PDF.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
+- **Several papers as one set.** A bundle builds a list of papers into one folder, with an index showing what you've started and finished, links from a citation to another paper of the set, and all your saved quotes in one file. See [Bundles](#bundles-several-papers-together).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
-- **Copies for your phone or e-reader.** On a phone, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen. `--epub` adds an EPUB, with its page list and linked notes, for Apple Books or a Kindle. `--single-file` adds the reading copy as one HTML file with nothing beside it, and `--email` sends either copy to you. On an iPhone, the EPUB is the copy to read: see [Reading on a phone](#reading-on-a-phone).
+- **Copies for your phone or e-reader.** On a phone, the top bar steps aside while you read, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen. `--epub` adds an EPUB, with its page list and linked notes, for Apple Books or another e-reader. `--single-file` adds the reading copy as one HTML file with nothing beside it, and `--email` sends either copy to you. On an iPhone, the EPUB is the copy to read: see [Reading on a phone](#reading-on-a-phone).
 
 ## Install
 
-lit-reader needs [uv](https://docs.astral.sh/uv/). To try it without installing anything permanently:
+lit-reader has only been tested on macOS so far. It needs [uv](https://docs.astral.sh/uv/). To try it without installing anything permanently:
 
 ```
 uvx --from git+https://github.com/RobinKwong/lit-reader lit-reader 2401.04088
@@ -35,14 +36,14 @@ To install the `lit-reader` command:
 uv tool install git+https://github.com/RobinKwong/lit-reader
 ```
 
-Papers with an arXiv HTML version or open-access text in Europe PMC need nothing else to build. To read PDFs, also install [poppler](https://poppler.freedesktop.org/) and [Docling](https://github.com/docling-project/docling):
+Papers with an arXiv HTML version or open-access text in Europe PMC need nothing else to build, though arXiv pages skip the coverage check without poppler. To read PDFs, also install [poppler](https://poppler.freedesktop.org/) and [Docling](https://github.com/docling-project/docling):
 
 ```
 brew install poppler                     # Debian or Ubuntu: sudo apt install poppler-utils
 uv tool install docling --python 3.12
 ```
 
-Docling downloads about 2 GB of models the first time it runs. lit-reader has only been tested on macOS so far.
+Docling downloads about 2 GB of models the first time it runs.
 
 ## Usage
 
@@ -63,7 +64,41 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `--pages A-B` | Converts only these pages of a PDF, for example `--pages 12-30`. |
 | `--epub` | Also writes an EPUB copy into the same folder. |
 | `--single-file` | Also writes `<slug>.html` into the same folder: the same reading copy with its styles, script and fonts inside it, so the one file works on its own. It leaves out links to a local PDF, which wouldn't travel with it. |
-| `--email` | Also emails the EPUB to you, for Apple Books or a Kindle. `--email html` sends the single file instead. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
+| `--email` | Also emails the EPUB to you, for Apple Books or another e-reader. `--email html` sends the single file instead. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
+
+### Bundles: several papers together
+
+A bundle is a set of papers read for one purpose, such as a seminar week, a literature review or an essay. List them in a plain text file, one per line, in any of the forms `lit-reader` takes for one paper:
+
+```
+# Groups, trust and AI
+# For the essay: it rests on these papers or has to answer them.
+arXiv:2508.08242
+10.1177/02633957211024474
+papers/beavers-2026.pdf  pages=253-314
+PMC7104178  route=online
+```
+
+Lines starting with `#` before the first paper give the bundle's title (the first such line) and a note (any others). After a paper, `pages=A-B` and `route=ROUTE` work as the options of the same name do for one paper. A relative PDF path is read from the text file's folder. The same PDF can be listed more than once with different pages, such as the chapters of a book, and each range becomes its own reading copy.
+
+```
+lit-reader bundle reading.txt
+```
+
+This writes every reading copy into one folder, `./<title>/` (or `-o DIR`), with an `index.html` listing them in order:
+
+- **The index** shows whether you've started or finished each paper and how many quotes you've saved from it. Under the list, a Saved quotes section downloads or copies every saved quote as one Markdown file, grouped by paper with each one's citation.
+- **Each paper's top bar** shows its place in the bundle ("3 of 7") and links back to the index.
+- **Citations between papers.** When a reference in one paper is another paper of the bundle, its citation card says so and links to that paper's reading copy. That paper's top bar then offers the way back to the citation.
+
+A paper that can't be converted is listed on the index and at the end of the command's output, with the reason and what to do about it, and the rest are still built. Running the command again rebuilds the bundle in the same folder. The index reads your progress and quotes from browser storage, which has been checked in Chrome only: see [Limits and testing](#limits-and-testing).
+
+| Option | What it does |
+|---|---|
+| `-o DIR` | Writes the bundle to `DIR` instead. |
+| `--route ROUTE` | The source for every paper, unless its line says otherwise. |
+| `--epub` | Also writes EPUBs. `--epub papers` (the default) writes one per paper, `--epub bundle` writes one EPUB holding every paper, with the bundle's contents first, and `--epub both` writes both. To make a bare `--epub` mean `bundle` or `both`, add a line such as `epub = "both"` to the settings file, `~/.config/lit-reader/config.toml`. |
+| `--single-file` | Also writes each paper as one HTML file, in `single-file/`. A single file leaves out the links to the other papers, which don't travel with it. |
 
 ### Emailing a copy to yourself
 
@@ -97,50 +132,11 @@ security add-generic-password -s lit-reader -a you@example.com -w
 
 On other systems, set the `LIT_READER_SMTP_PASSWORD` environment variable.
 
-### Bundles: several papers together
-
-A bundle is a set of papers read for one purpose, such as a seminar week, a literature review or an essay. List them in a plain text file, one per line, in the forms `lit-reader` takes on its own:
-
-```
-# Groups, trust and AI
-# For the essay: it rests on these papers or has to answer them.
-arXiv:2508.08242
-10.1177/02633957211024474
-papers/beavers-2026.pdf  pages=253-314
-PMC7104178  route=online
-```
-
-Lines starting with `#` before the first paper give the bundle's title (the first line) and a note. After a paper, `pages=A-B` and `route=ROUTE` work as the options of the same name do for one paper. A PDF path is read from the text file's folder.
-
-```
-lit-reader bundle reading.txt
-```
-
-This writes every reading copy into one folder, `./<title>/` (or `-o DIR`), with an `index.html` listing them in order. The index shows whether you've started or finished each paper and how many quotes you've saved from it, and under the list it offers every saved quote as one Markdown file, grouped by paper with each one's citation. Each paper's top bar shows its place in the bundle ("3 of 7"). When a reference in one paper is another paper of the bundle, its citation card says so and links to that paper's reading copy, whose top bar then offers the way back to the citation.
-
-A paper that can't be converted is listed on the index and at the end of the command's output, with the reason and what to change in the text file, and the rest are still built. Running the command again rebuilds the bundle in the same folder.
-
-| Option | What it does |
-|---|---|
-| `-o DIR` | Writes the bundle to `DIR` instead. |
-| `--route ROUTE` | The source for every paper, unless its line says otherwise. |
-| `--epub` | Also writes EPUBs. `--epub papers` (the default) writes one per paper, `--epub bundle` writes one EPUB holding every paper, with the bundle's contents first, and `--epub both` writes both. To make a bare `--epub` mean `bundle` or `both`, add a line such as `epub = "both"` to the settings file. |
-| `--single-file` | Also writes each paper as one HTML file, in `single-file/`. A single file leaves out the links to the other papers, which don't travel with it. |
-
-## Reading on a phone
-
-The reading copies lay out for a phone screen, but how you get one onto a phone matters, because a phone's preview of an attachment may not run the page's script.
-
-- **iPhone:** use the EPUB. `--email` sends it to you; open the attachment from Mail and it goes into Books, or in the Gmail app choose Books from the share sheet. Apple Books gives you its own contents, footnote pop-ups, font settings and highlights. A single HTML file opened from the Gmail app on an iPhone shows the text, but the preview runs no script and can't follow links within the page, so the contents, citations and settings don't respond.
-- **Android, or a laptop:** a `--single-file` copy opened in a browser works like the folder copy.
-
-Where no script runs, a single file still shows the text, its time to read, footnotes under their paragraphs and each table's text version, and it hides the buttons that can't work.
-
 ## Which source is used
 
 **If you give a PDF, lit-reader reads that PDF.** Your file may be a particular version of the paper, such as an accepted manuscript, so it is never replaced by an online copy without your asking.
 
-**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then [ar5iv](https://ar5iv.labs.arxiv.org/)'s conversion, then arXiv's PDF. ar5iv is arXiv Labs' earlier HTML conversion, and lit-reader uses it only when arXiv says it has no HTML version of the paper. If arXiv is down, lit-reader reports that instead.
+**If you give an identifier**, lit-reader uses the best source it can find: arXiv's HTML, then Europe PMC's full-text XML for open-access papers, then [ar5iv](https://ar5iv.labs.arxiv.org/)'s conversion, then arXiv's PDF. ar5iv is arXiv Labs' earlier HTML conversion, and lit-reader uses it only when arXiv says it has no HTML version of the paper. If arXiv is down, lit-reader says so and doesn't try ar5iv.
 
 To change this, use `--route`:
 
@@ -164,7 +160,31 @@ On every route, lit-reader sends an arXiv ID or DOI found on a PDF's first page 
 | Europe PMC XML | Open-access papers in Europe PMC | Real headings, linked citations and the publisher's figures. |
 | PDF | Everything else | Text converted by Docling, with the original page numbers in the margin. Figures and tables are images cropped from the page. |
 
-## What else it works with
+## Checking a reading copy
+
+lit-reader compares the page with the source text and prints the result:
+
+```
+coverage: 95.6% of the 5438 words in the PDF's text reached the page
+  missing run of 58 words: the proportion of repeated layer 0 0 20 0 15 ...
+```
+
+The check counts words, so it catches text that was lost but not text in the wrong order, such as two columns read across, or a misread equation. A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original. For a PDF, the reading copy then offers a "Show the original page" button at that page, for up to ten pages, and the build lists the pages it flagged.
+
+Pages built from arXiv HTML or a PDF are compared with the PDF's text, which needs poppler. Without it, arXiv pages still build but skip the check. Pages built from Europe PMC are compared with the article's XML.
+
+If a paper converts badly, please [open an issue](https://github.com/RobinKwong/lit-reader/issues) with its arXiv ID, DOI or a link to it.
+
+## Reading on a phone
+
+The reading copies lay out for a phone screen, but how you get one onto a phone matters, because a phone's preview of an attachment may not run the page's script.
+
+- **iPhone:** use the EPUB. `--email` sends it to you; open the attachment from Mail and it goes into Books, or in the Gmail app choose Books from the share sheet. Apple Books gives you its own contents, footnote pop-ups, font settings and highlights. A single HTML file opened from the Gmail app on an iPhone shows the text, but the preview runs no script and can't follow links within the page, so the contents, citations and settings don't respond.
+- **Android, or a laptop:** a `--single-file` copy opened in a browser works like the folder copy.
+
+Where no script runs, a single file still shows the text, its time to read, footnotes under their paragraphs and each table's text version, and it hides the buttons that can't work.
+
+## Limits and testing
 
 lit-reader is tuned for academic papers, and it also handles other long PDFs with selectable text, such as dissertations and reports. A 370-page dissertation took about two minutes to convert on a Mac laptop.
 
@@ -176,23 +196,9 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Equations:** arXiv pages keep real maths. Europe PMC pages use the article's maths if it has any, and otherwise its image of the equation or its TeX source. In PDFs, an equation Docling can read appears as plain text, so check it against the original. One it can't read appears as an image of the printed equation.
 - **Screens:** lit-reader is designed for reading on a laptop or desktop, and pages also lay out for phones. The phone layout has been checked in a desktop browser's phone emulation. On a real iPhone, an EPUB in Apple Books and a single file in the Gmail app's preview have been tried, but not a single file in a phone's browser. A page needs the `assets` folder beside it unless you build it with `--single-file`. Each browser keeps its own quotes and reading position: a phone won't have what you saved on a laptop.
+- **Browsers:** reading copies have been checked in Chrome. A bundle's index reads each paper's quotes and finished mark from browser storage, which works when the browser shares storage between local files in one folder, as Chrome does. Safari and Firefox are untested.
 - **E-readers:** EPUB copies pass structural checks and open in Apple Books on an iPhone, but haven't been tested on a Kindle yet. How maths and wide tables look depends on the e-reader.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
-
-## Checking a reading copy
-
-lit-reader compares the page with the source text and prints the result:
-
-```
-coverage: 95.6% of the 5438 words in the PDF's text reached the page
-  missing run of 58 words: the proportion of repeated layer 0 0 20 0 15 ...
-```
-
-A missing run is a stretch of 25 or more source words that didn't reach the page. Runs of numbers and labels usually come from charts and tables, which is expected when they appear as images. A run of ordinary sentences means text was lost, so check that passage against the original. For a PDF, the reading copy then offers a "Show the original page" button at that page, for up to ten pages, and the build lists the pages it flagged.
-
-Pages built from arXiv HTML or a PDF are compared with the PDF's text, which needs poppler. Without it, arXiv pages still build but skip the check. Pages built from Europe PMC are compared with the article's XML.
-
-If a paper converts badly, please [open an issue](https://github.com/RobinKwong/lit-reader/issues) with its arXiv ID, DOI or a link to it.
 
 ## Privacy
 
@@ -206,13 +212,24 @@ lit-reader uses no AI service, analytics or account. Conversion happens on your 
 
 ## Copyright
 
-Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one. A single file or an EPUB copy doesn't include the PDF, but it does include the paper's full text and figures, so the same care applies.
+Reading copies are for your own use. The MIT licence below covers this software, not the papers you convert, which keep their own copyright and licences. Please don't redistribute reading copies of paywalled papers. A reading copy made from a PDF includes a copy of that PDF in its folder, so take particular care when sharing one. A single file or an EPUB copy doesn't include the PDF, but it does include the paper's full text and figures, so the same care applies. A bundle's folder and its EPUB hold every paper in the bundle, which matters when you hand one to a reading group.
 
 ## Licence
 
 lit-reader is released under the [MIT licence](LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](src/lit_reader/fonts/OFL.txt).
 
 ## Changelog
+
+### v1.2
+
+v1.2 reads several papers as one set.
+
+- **Bundles.** `lit-reader bundle <file>` builds every paper listed in a text file into one folder, with an index page showing which papers you've started or finished and how many quotes you've saved from each. A paper that can't be converted is listed with the reason and what to do, and the rest are still built.
+- **Moving between papers.** Each paper's top bar shows its place in the bundle ("3 of 7"). A citation of another paper in the bundle links to its reading copy, and that paper's bar then offers the way back to the citation.
+- **Quotes across the bundle.** The index downloads or copies every saved quote as one Markdown file, grouped by paper with each one's citation.
+- **One EPUB for the bundle.** `--epub bundle` writes one book holding every paper, with the bundle's contents first and references between its papers linked. `--epub both` also writes one EPUB per paper.
+- **A thinner bar on a phone.** The top bar holds only the contents button and the reading status, and steps aside as you scroll down. All papers, Quotes and the reading settings sit at the top of the contents drawer.
+- **Smaller changes.** "Finished" on the index now has enough contrast in every theme, and marking a paper finished is announced to screen readers.
 
 ### v1.1
 
