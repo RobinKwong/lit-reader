@@ -2,7 +2,7 @@
 
 lit-reader turns an academic paper into an offline HTML reading copy, with reflowed text, a contents sidebar, citation cards, sidenotes and a saved reading position. It can also build a set of papers into one folder, with an index and links between them.
 
-![A paper in lit-reader, with a citation card open beside the text and a contents sidebar showing the minutes in each section](docs/screenshot.png)
+![A paper in lit-reader, with a citation card open beside the text and a contents sidebar showing the minutes in each section](https://raw.githubusercontent.com/RobinKwong/lit-reader/main/docs/screenshot.png)
 
 <sub>Shown: Setälä, Christensen, Leino and Strandberg, "Beyond polarization and selective trust", *Politics* (2021), doi:10.1177/02633957211024474, CC BY-NC.</sub>
 
@@ -24,17 +24,19 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 
 ## Install
 
-lit-reader has only been tested on macOS so far. It needs [uv](https://docs.astral.sh/uv/). To try it without installing anything permanently:
+lit-reader is on [PyPI](https://pypi.org/project/lit-reader/) and has only been tested on macOS so far. With [uv](https://docs.astral.sh/uv/), you can try it without installing anything permanently:
 
 ```
-uvx --from git+https://github.com/RobinKwong/lit-reader lit-reader 2401.04088
+uvx lit-reader 2401.04088
 ```
 
 To install the `lit-reader` command:
 
 ```
-uv tool install git+https://github.com/RobinKwong/lit-reader
+uv tool install lit-reader
 ```
+
+or, with pipx, `pipx install lit-reader`. To update it later, run `uv tool upgrade lit-reader`.
 
 Papers with an arXiv HTML version or open-access text in Europe PMC need nothing else to build, though arXiv pages skip the coverage check without poppler. To read PDFs, also install [poppler](https://poppler.freedesktop.org/) and [Docling](https://github.com/docling-project/docling):
 
@@ -216,7 +218,7 @@ Reading copies are for your own use. The MIT licence below covers this software,
 
 ## Licence
 
-lit-reader is released under the [MIT licence](LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](src/lit_reader/fonts/OFL.txt).
+lit-reader is released under the [MIT licence](https://github.com/RobinKwong/lit-reader/blob/main/LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](https://github.com/RobinKwong/lit-reader/blob/main/src/lit_reader/fonts/OFL.txt).
 
 ## Changelog
 

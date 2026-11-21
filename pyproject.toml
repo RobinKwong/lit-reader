@@ -23,12 +23,17 @@ dependencies = []
 
 [project.urls]
 Repository = "https://github.com/RobinKwong/lit-reader"
+Issues = "https://github.com/RobinKwong/lit-reader/issues"
+Changelog = "https://github.com/RobinKwong/lit-reader#changelog"
 
 [project.scripts]
 lit-reader = "lit_reader.core:main"
 
 [tool.hatch.version]
 path = "src/lit_reader/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/lit_reader", "tests", "docs", "README.md", "LICENSE", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lit_reader"]
