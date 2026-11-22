@@ -17,7 +17,7 @@ Unlike most PDF viewers, which show you the printed page, lit-reader reflows the
 - **A sense of where you are.** The contents sidebar shows the minutes in each section, and the Contents button hides it when you want only the text. The top bar shows the time left, and the page reopens where you stopped. Papers built from a PDF also keep their original page numbers in the margin.
 - **Quotes saved with their citation.** Select a passage and choose "Save quote", or press Q. The Quotes button in the top bar copies each quote with its author, year and page, or downloads them all as a Markdown file. Quotes are kept in your browser, not in a file, so once you have saved some, the Quotes panel and the end of the paper remind you of any you haven't downloaded. Page numbers come only from papers built from a PDF.
 - **Settings for your own eyes.** You can change the theme, font, size, line length and line spacing. People read fastest in different fonts, and [the font you like best may not be your fastest](https://research.adobe.com/publication/towards-individuated-reading-experiences-different-fonts-increase-reading-speed-for-different-individuals).
-- **Several papers as one set.** A bundle builds a list of papers into one folder, with an index showing what you've started and finished, links from a citation to another paper of the set, and all your saved quotes in one file. See [Bundles](#bundles-several-papers-together).
+- **Several papers as one set.** A bundle builds a list of papers into one folder, with an index showing how much of each paper you've read and when, links from a citation to another paper of the set, and all your saved quotes in one file. See [Bundles](#bundles-several-papers-together).
 - **A check on the build.** lit-reader reports the share of the source's words that reached the page and lists any long passages that didn't. Tables and figures from a PDF appear as images, so their words count as missing. The check can't run on scanned PDFs, or on arXiv pages built without poppler. Where a PDF page lost ordinary sentences, the reading copy offers that page as printed.
 - **Private and offline.** Each reading copy is a local HTML page that loads nothing from the network and needs no account or server.
 - **Copies for your phone or e-reader.** On a phone, the top bar steps aside while you read, citations open in a sheet along the bottom, the contents sit in a drawer, and tapping a figure or table opens it full screen. `--epub` adds an EPUB, with its page list and linked notes, for Apple Books or another e-reader. `--single-file` adds the reading copy as one HTML file with nothing beside it, and `--email` sends either copy to you. On an iPhone, the EPUB is the copy to read: see [Reading on a phone](#reading-on-a-phone).
@@ -89,7 +89,7 @@ lit-reader bundle reading.txt
 
 This writes every reading copy into one folder, `./<title>/` (or `-o DIR`), with an `index.html` listing them in order:
 
-- **The index** shows whether you've started or finished each paper and how many quotes you've saved from it. Under the list, a Saved quotes section downloads or copies every saved quote as one Markdown file, grouped by paper with each one's citation.
+- **The index** shows how much of each paper's main text you've read, with a bar and when you last read it, and how many quotes you've saved from it. A paragraph counts as read once it has been on screen long enough to read at twice an ordinary pace, so skimming or jumping to the conclusion barely moves the figure. "Finished" is a mark you set yourself at the end of a paper. Under the list, a Saved quotes section downloads or copies every saved quote as one Markdown file, grouped by paper with each one's citation.
 - **Each paper's top bar** shows its place in the bundle ("3 of 7") and links back to the index.
 - **Citations between papers.** When a reference in one paper is another paper of the bundle, its citation card says so and links to that paper's reading copy. That paper's top bar then offers the way back to the citation.
 
@@ -198,13 +198,13 @@ lit-reader is tuned for academic papers, and it also handles other long PDFs wit
 - **Citations and footnotes:** citation cards need a reference list that lit-reader can recognise. In PDFs, footnotes appear as small text after the paragraph instead of in the margin.
 - **Equations:** arXiv pages keep real maths. Europe PMC pages use the article's maths if it has any, and otherwise its image of the equation or its TeX source. In PDFs, an equation Docling can read appears as plain text, so check it against the original. One it can't read appears as an image of the printed equation.
 - **Screens:** lit-reader is designed for reading on a laptop or desktop, and pages also lay out for phones. The phone layout has been checked in a desktop browser's phone emulation. On a real iPhone, an EPUB in Apple Books and a single file in the Gmail app's preview have been tried, but not a single file in a phone's browser. A page needs the `assets` folder beside it unless you build it with `--single-file`. Each browser keeps its own quotes and reading position: a phone won't have what you saved on a laptop.
-- **Browsers:** reading copies have been checked in Chrome. A bundle's index reads each paper's quotes and finished mark from browser storage, which works when the browser shares storage between local files in one folder, as Chrome does. Safari and Firefox are untested.
+- **Browsers:** reading copies have been checked in Chrome. A bundle's index reads each paper's quotes and reading progress from browser storage, which works when the browser shares storage between local files in one folder, as Chrome does. Safari and Firefox are untested.
 - **E-readers:** EPUB copies pass structural checks and open in Apple Books on an iPhone, but haven't been tested on a Kindle yet. How maths and wide tables look depends on the e-reader.
 - **Languages:** accented Latin text comes through correctly, but pages are marked as English and line-break repair uses an English word list. Right-to-left scripts and Chinese, Japanese and Korean are untested.
 
 ## Privacy
 
-lit-reader uses no AI service, analytics or account. Conversion happens on your machine, reading copies load nothing from the internet, and your settings, reading position and saved quotes stay in your browser. It uses the network only in these cases:
+lit-reader uses no AI service, analytics or account. Conversion happens on your machine, reading copies load nothing from the internet, and your settings, reading position, reading progress and saved quotes stay in your browser. It uses the network only in these cases:
 
 - **Fetching a paper:** an arXiv ID, DOI or PMCID is sent to arXiv, ar5iv, Crossref or Europe PMC, and the paper comes back.
 - **Looking up a local PDF:** an arXiv ID or DOI found on the first page is sent to arXiv or Crossref to find the title and authors. This happens on every route, including `--route pdf`, and can't be turned off. The PDF itself is never uploaded.
@@ -221,6 +221,11 @@ Reading copies are for your own use. The MIT licence below covers this software,
 lit-reader is released under the [MIT licence](https://github.com/RobinKwong/lit-reader/blob/main/LICENSE). It includes the Literata typeface, which is licensed under the [SIL Open Font License](https://github.com/RobinKwong/lit-reader/blob/main/src/lit_reader/fonts/OFL.txt).
 
 ## Changelog
+
+### Unreleased
+
+- **Reading progress.** The index shows how much of each paper's main text you've read ("About 40% read", with a bar) and when you last read it ("3 days ago"). Only time spent reading counts: opening a paper, scrolling through it or jumping to the conclusion doesn't. Papers opened with an earlier version show "In progress" until you read some more of them.
+- **A shorter settings panel on the index.** It offers only theme, font and size, the settings that change the list.
 
 ### v1.2
 

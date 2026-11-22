@@ -89,18 +89,66 @@
   if (!pid) {
     // the index page: each paper's reading status and saved quotes, then every quote together
     var rows = [].slice.call(document.querySelectorAll(".list li[data-pid]"));
-    rows.forEach(function (li) {
+    rows.forEach(function (li, n) {
       var st = load("litreader.status." + li.getAttribute("data-pid"), {});
       var s = li.querySelector(".s"); if (!s) return;
       var nq = li.hasAttribute("data-cite") ? indexClips(li.getAttribute("data-pid")).length : 0;
-      var bits = [];
-      if (st.state) bits.push(st.state === "done" ? "Finished" : "In progress");
+      var share = typeof st.pct === "number" ? st.pct : null;
+      var bits = [], when = lastRead(st.readAt);  // only time spent reading: opening or scrolling a paper isn't reading it
+      if (st.state === "done") bits.push("Finished");
+      else if (share !== null) bits.push(readShare(share));
+      else if (st.state) bits.push("In progress");  // opened before read shares were kept
+      if (bits.length && when) bits.push("last read " + when);
       if (nq) bits.push(nq === 1 ? "1 quote" : nq + " quotes");
-      s.textContent = bits.join(" · ");
-      if (st.state) s.className = "s " + (st.state === "done" ? "done" : "started");
+      s.textContent = "";
+      bits.forEach(function (b, k) {  // each part kept whole, so a narrow column breaks between them
+        if (k) s.appendChild(document.createTextNode(" · "));
+        var part = document.createElement("span"); part.className = "part"; part.textContent = b; s.appendChild(part);
+      });
+      if (bits.length) {
+        var a = li.querySelector(".t a");
+        s.id = "status-" + n;
+        if (a) a.setAttribute("aria-describedby", s.id);  // tabbing to the title also gives its progress
+      }
+      if (st.state || share !== null) s.className = "s " + (st.state === "done" ? "done" : "started");
+      if (share !== null && st.state !== "done") {  // a bar, so the papers can be compared at a glance
+        var m = document.createElement("span"); m.className = "meter"; m.setAttribute("aria-hidden", "true");
+        var f = document.createElement("span"); f.style.width = Math.round(100 * Math.min(1, Math.max(0, share))) + "%";
+        m.appendChild(f); s.appendChild(m);
+      }
     });
+    var head = document.querySelector("header.paper");
+    if (head && rows.some(function (li) { return li.hasAttribute("data-cite"); })) {
+      var note = document.createElement("p"); note.className = "progress-note";
+      note.textContent = "As you read, each paper here shows how much of its main text you've spent time reading " +
+        "(not how far you've scrolled) and when you last read it. “Finished” is your own mark, from the end of each paper.";
+      head.appendChild(note);
+    }
     indexQuotes(rows);
     return;
+  }
+
+  /* How much of the main text has been read, said roughly: the measure is an estimate. */
+  function readShare(p) {
+    if (p >= 0.999) return "All read";
+    var n = Math.round(p * 20) * 5;
+    if (n >= 100) n = 95;
+    return n < 5 ? "Under 5% read" : "About " + n + "% read";
+  }
+  /* How long ago, in words, with the date once it is more than a week back:
+     "today", "3 days ago", "12 days ago (10 Nov)", "3 weeks ago (1 Nov)", "18 Oct 2025". */
+  function lastRead(iso) {
+    var d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return "";
+    var now = new Date(), day = 864e5;
+    var days = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / day);
+    var date = d.toLocaleDateString("en-GB", d.getFullYear() === now.getFullYear() ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 7) return days + " days ago";
+    if (days < 14) return days + " days ago (" + date + ")";
+    if (days < 60) return Math.floor(days / 7) + " weeks ago (" + date + ")";
+    return date;
   }
 
   function indexClips(p) { var v = load("litreader.clips." + p, []); return Array.isArray(v) ? v : []; }
@@ -734,7 +782,8 @@
 
   function measure() {
     geo = blocks.map(function (b) {
-      return { el: b, top: b.getBoundingClientRect().top + window.scrollY, w: +b.getAttribute("data-w"), sec: b.getAttribute("data-in") || "", body: b.getAttribute("data-body") === "1" };
+      var r = b.getBoundingClientRect();
+      return { el: b, top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, w: +b.getAttribute("data-w"), sec: b.getAttribute("data-in") || "", body: b.getAttribute("data-body") === "1" };
     });
   }
   function sectionTitle(id) {
@@ -769,7 +818,7 @@
     Object.keys(tocLinks).forEach(function (k) { var on = !atStart && k === (listed[cur.sec] || cur.sec);
       tocLinks[k].classList.toggle("current", on);
       if (on) tocLinks[k].setAttribute("aria-current", "location"); else tocLinks[k].removeAttribute("aria-current"); });
-    latest = { id: cur.el.id, started: bodyTotal && bodyLeft / bodyTotal < 0.97 };
+    latest = { id: cur.el.id };
     clearTimeout(saveTimer);
     if (Date.now() - lastSaved > 1500) savePosition();
     else saveTimer = setTimeout(savePosition, 1500);  // so the place where scrolling stops is the one kept
@@ -778,11 +827,55 @@
     if (!latest || !resumed) return;  // nothing is saved until the saved place has been restored
     lastSaved = Date.now();
     var st = load("litreader.status." + pid, {});
-    st.pos = latest.id; st.at = new Date().toISOString();
-    if (!st.state && latest.started) st.state = "started";
+    st.pos = latest.id; st.at = new Date().toISOString();  // where you were, for resuming; a paper counts as started only once something is read
     save("litreader.status." + pid, st);
   }
   window.addEventListener("pagehide", savePosition);
+
+  /* ---------- how much of the main text has been read ----------
+     A paragraph counts as read once it has been on screen for as long as it
+     takes to read at twice the usual speed. Time on screen goes to the
+     paragraphs in view (at least half shown, or filling half the screen)
+     from the top down, as you'd read them, so a screen of
+     text is not read all at once and skimming past barely counts. The clock
+     starts at your first key, touch, click or pointer movement (opening the
+     page or resuming your place isn't reading), and stops while the window is
+     hidden or in the background, while a figure, the contents drawer or a
+     panel covers the text, and after 90 seconds without input. The share is
+     saved with the reading status, so the list of papers can show it without
+     the page's layout. */
+  var READ_WPM = WPM * 2, IDLE_MS = 90 * 1000;
+  var readSet = {}, dwell = {}, lastActive = 0;
+  (load("litreader.status." + pid, {}).read || []).forEach(function (id) { readSet[id] = true; });
+  ["keydown", "pointerdown", "pointermove", "touchstart", "wheel"].forEach(function (t) {  // not "scroll": the page scrolls itself when resuming
+    window.addEventListener(t, function () { lastActive = Date.now(); }, { passive: true });
+  });
+  function saveRead() {
+    var st = load("litreader.status." + pid, {});
+    (st.read || []).forEach(function (id) { readSet[id] = true; });  // another tab on this paper may have read more
+    var bodyTotal = 0, readWords = 0;
+    geo.forEach(function (g) { if (g.body) { bodyTotal += g.w; if (readSet[g.el.id]) readWords += g.w; } });
+    if (!bodyTotal) return;
+    st.read = Object.keys(readSet).filter(function (id) { return document.getElementById(id); });
+    st.pct = Math.round(1000 * readWords / bodyTotal) / 1000;
+    st.readAt = new Date().toISOString();
+    if (!st.state) st.state = "started";
+    save("litreader.status." + pid, st);
+  }
+  setInterval(function () {
+    if (!resumed || !geo.length || document.visibilityState !== "visible" || !document.hasFocus() || Date.now() - lastActive > IDLE_MS) return;
+    if (viewer || (toc && toc.classList.contains("open")) || (panel && !panel.hidden) || (clipsPanel && !clipsPanel.hidden)) return;  // the text is covered
+    var viewTop = window.scrollY + (root.classList.contains("bar-away") ? 0 : barBottom()), viewBottom = window.scrollY + window.innerHeight;
+    for (var i = 0; i < geo.length; i++) {
+      var g = geo[i];
+      if (!g.body || !g.w || readSet[g.el.id]) continue;
+      var shown = Math.min(g.bottom, viewBottom) - Math.max(g.top, viewTop);  // a last line peeking out at the top isn't being read
+      if (shown <= 0 || (shown < (g.bottom - g.top) / 2 && shown < (viewBottom - viewTop) / 2)) continue;
+      dwell[g.el.id] = (dwell[g.el.id] || 0) + 1;
+      if (dwell[g.el.id] >= Math.max(2, g.w / READ_WPM * 60)) { readSet[g.el.id] = true; saveRead(); }
+      return;  // one paragraph at a time
+    }
+  }, 1000);
   window.addEventListener("scroll", function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
   window.addEventListener("resize", function () { measure(); update(); });
 
@@ -816,7 +909,13 @@
   }
   if (doneBtn) doneBtn.addEventListener("click", function () {
     var st = load("litreader.status." + pid, {});
-    st.state = st.state === "done" ? "started" : "done"; save("litreader.status." + pid, st); showDone();
+    if (st.state !== "done") { st.before = st.state || ""; st.state = "done"; }
+    else {  // undoing it puts back what the paper showed before
+      var before = typeof st.before === "string" ? st.before : (st.pos || (st.read && st.read.length) ? "started" : "");  // marked finished by an earlier version, which kept no "before"
+      if (before) st.state = before; else delete st.state;
+      delete st.before;
+    }
+    save("litreader.status." + pid, st); showDone();
     toast(st.state === "done" ? "<span>Marked as finished. It shows on the list of papers.</span>"
                               : "<span>No longer marked as finished.</span>", 3000);
   });

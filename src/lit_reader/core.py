@@ -746,9 +746,9 @@ PANEL = """<div class="panel" id="panel" role="group" aria-label="Reading settin
   <div class="row row-width" role="group" aria-label="Line length"><span>Line length</span><span class="seg">
     <button data-pref="width" data-val="narrow">Narrow</button><button data-pref="width" data-val="medium">Medium</button>
     <button data-pref="width" data-val="wide">Wide</button></span></div>
-  <div class="row" role="group" aria-label="Paragraphs"><span>Paragraphs</span><span class="seg">
+  <div class="row row-para" role="group" aria-label="Paragraphs"><span>Paragraphs</span><span class="seg">
     <button data-pref="para" data-val="short">Shorter</button><button data-pref="para" data-val="orig">As published</button></span></div>
-  <div class="row" role="group" aria-label="Line spacing"><span>Line spacing</span><span class="seg">
+  <div class="row row-lh" role="group" aria-label="Line spacing"><span>Line spacing</span><span class="seg">
     <button data-pref="lh" data-val="tight">1.4</button><button data-pref="lh" data-val="normal">1.5</button>
     <button data-pref="lh" data-val="loose">1.7</button></span></div>
   <div class="note">People read fastest in different fonts, and liking a font doesn't predict it (Wallace et al., 2022). It's worth trying each one for a page.</div>
