@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Better guesses for a PDF with no record.** The title now comes from the largest type on the first page, skipping a journal's masthead or another line that repeats on later pages, and the author line under it is picked up. The year comes from a publication line or the PDF's creation date, and is left blank rather than taken from a date range in the title. The output lists each guess and where it came from. An empty Title field in the PDF no longer becomes "Creator: …".
+- **Your own title, authors, year and venue.** `--title`, `--author`, `--year` and `--venue` replace what lit-reader found or guessed, in the page, the single file and the EPUB.
+
 ## v1.3
 
 v1.3 shows how far you've got with each paper in a bundle.
