@@ -22,7 +22,7 @@ def run(lines, fail_route=(), fail_pages=()):
     pdf.write_bytes(b"%PDF-1.4")
     (tmp / "reading.txt").write_text("# Test bundle\n" + "\n".join(lines) + "\n", encoding="utf-8")
 
-    def identify(kind, value):
+    def identify(kind, value, given=None, advise=True):
         meta = {"pid": "pid-" + Path(value).stem, "title": "Paper about " + Path(value).stem,
                 "authors": ["A Author"], "year": "2024", "venue": "", "pdf_path": str(pdf)}
         d = tmp / "work" / meta["pid"]

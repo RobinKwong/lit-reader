@@ -1140,7 +1140,7 @@ def arxiv_doc(meta, d):
     if t is not None:
         for n in t.findall(lambda x: "ltx_note" in x.cls()):
             n.kids = []  # a note on the title has no place in the heading or the browser tab
-        doc.meta["title_html"] = ArxivInline(Doc({})).run(t).strip()
+        set_title_html(doc.meta, ArxivInline(Doc({})).run(t).strip())
 
     ab = art.find(lambda x: "ltx_abstract" in x.cls())
     if ab is not None:
@@ -1490,7 +1490,7 @@ def jats_doc(meta, d):
         if t is not None:
             for x in t.findall(lambda x: x.tag == "xref" and x.attrs.get("ref-type") == "fn"):
                 x.kids, x.attrs["ref-type"] = [], "none"  # a note on the title has no place in the heading or the browser tab
-            doc.meta["title_html"] = ix.run(t).strip()
+            set_title_html(doc.meta, ix.run(t).strip())
         all_abstracts = art_meta.findall(lambda x: x.tag == "abstract")
         full = [a for a in all_abstracts if a.attrs.get("abstract-type") not in ("toc", "teaser", "precis", "web-summary", "graphical")]
         for ab in full or all_abstracts:
@@ -2805,25 +2805,241 @@ def on_first_page(title, first):
     return bool(norm(title)) and norm(title)[:60] in norm(first)
 
 
-def guess_title(pdf, first):
+def pdf_info(pdf):
+    """pdfinfo's fields for a PDF ({} without poppler or on failure)."""
     try:
         r = subprocess.run(["pdfinfo", str(pdf)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60) if shutil.which("pdfinfo") else None
     except subprocess.TimeoutExpired:
         r = None
-    m = re.search(r"^Title:\s*(.+)$", r.stdout.decode("utf-8", "replace"), re.M) if r and r.returncode == 0 else None
-    t = m.group(1).strip() if m else ""
-    if len(t.split()) >= 3 and not re.search(r"\.(pdf|docx?|tex|indd)$|microsoft word|untitled", t, re.I):
-        return t
-    for line in first.splitlines():
-        line = line.strip()
-        if len(line.split()) >= 4 and not re.search(r"https?:|doi|©|copyright|journal|vol\.|arxiv", line, re.I):
-            return line
-    return "Untitled paper"
+    if not r or r.returncode != 0:
+        return {}
+    return dict((k.strip(), v.strip()) for k, v in re.findall(r"^([A-Za-z][\w ]*?):[ \t]*(.*)$", r.stdout.decode("utf-8", "replace"), re.M))
+
+
+def line_key(line):
+    """A line as compared across pages: letters only, accents folded, so a running
+    head matches whatever page number or spacing it carries."""
+    return re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", line).encode("ascii", "ignore").decode().lower())
+
+
+def running_lines(pages):
+    """Lines that open or close at least two later pages: running heads, mastheads
+    and footers, which a first page also prints above or below the title."""
+    seen = {}
+    for pg in pages[1:]:
+        ls = [x for x in pg.splitlines() if x.strip()]
+        for k in {line_key(x) for x in ls[:3] + ls[-3:]}:
+            if len(k) >= 6:
+                seen[k] = seen.get(k, 0) + 1
+    return {k for k, n in seen.items() if n >= 2}
+
+
+TITLE_SKIP = re.compile(r"https?:|\bdoi\b|©|copyright|\bjournal\b|\bvol\.|arxiv", re.I)
+AFFILIATION = re.compile(r"universit|department|institut|school|college|faculty|centre|center|laborator|@|^\s*(abstract|résumé|summary|keywords?)\b", re.I)
+NAME_PARTICLES = {"van", "von", "der", "den", "de", "del", "della", "di", "da", "du", "la", "le", "dos", "das", "ter", "y"}
+NOT_NAMES = {"the", "a", "an", "of", "and", "for", "in", "on", "to", "with", "from", "by", "at", "as", "or"}
+
+
+NAME_MARKS = re.compile(r"\s*[\d*∗†‡§¶♠♣♦♥⋆★✉]+(?=[\s,;]|$)")
+
+
+def name_list(line):
+    """The names on an author line, such as "R.W. Sandwell", "Ana Ruiz and Jo
+    Lee" or "Jo Lee † Ana Ruiz ‡", or None if the line doesn't look like one.
+    A line of names with no separators between them gives None too, since
+    where one name ends would be a guess."""
+    s = NAME_MARKS.sub(",", line).strip(" ,")
+    if not s or len(s) > 200 or AFFILIATION.search(s) or re.search(r"[\d:;?!()“”\"/]|^[‘’']", s):
+        return None
+    shout = re.sub(r"\band\b", "", s, flags=re.I).isupper()  # a line set in capitals
+    names = [x.strip() for x in re.split(r",|&|\band\b", s, flags=re.I) if x.strip()]
+    for n in names:
+        toks = n.split()
+        if not 2 <= len(toks) <= 5:
+            return None
+        for pos, t in enumerate(toks):
+            if t.lower() in NAME_PARTICLES and pos:
+                continue
+            if t.lower() in NOT_NAMES or not t[0].isupper() or (re.fullmatch(r"[A-Z]{2,3}", t) and not shout) or not re.fullmatch(r"[^\W\d_][^\W\d_.'’-]*(?:[.'’-][^\W\d_]*)*\.?", t):
+                return None
+        if all(len(t.rstrip(".")) <= 1 or re.fullmatch(r"(?:[^\W\d_]\.)+", t) for t in toks):
+            return None  # initials only: no surname
+    caps = lambda t: t.capitalize() if t.isupper() and re.fullmatch(r"[^\W\d_]{%d,}" % (2 if shout else 3), t) else t  # SANDWELL, not R.W.
+    return [" ".join(caps(t) for t in n.split()) for n in names]
+
+
+def wordy(line):
+    """True when most of a line's words are ordinary lowercase dictionary words,
+    as in "Cross-Domain Recommendation Meets Large", which a list of names isn't."""
+    common = common_words()
+    toks = [t.lower().strip(".,") for t in re.split(r"[\s-]+", line) if len(t.strip(".,")) > 1]
+    hits = [t for t in toks if t in common or (t.endswith("s") and t[:-1] in common)]
+    return bool(common) and len(hits) * 2 >= len(toks) > 0
+
+
+COMMON = None
+
+
+def common_words():
+    """The system word list's lowercase entries: ordinary words, not names."""
+    global COMMON
+    if COMMON is None:
+        p = Path("/usr/share/dict/words")
+        COMMON = set(w.strip() for w in p.read_text(errors="ignore").splitlines() if w.strip().islower()) if p.exists() else set()
+    return COMMON
+
+
+def first_page_lines(pdf):
+    """(text, height) for each line of a PDF's first page, in reading order, from
+    poppler's layout boxes. Rotated lines, such as arXiv's margin stamp, are left
+    out. [] when poppler can't say."""
+    try:
+        r = subprocess.run(["pdftotext", "-bbox-layout", "-f", "1", "-l", "1", str(pdf), "-"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60) if shutil.which("pdftotext") else None
+        root = ET.fromstring(re.sub(rb"<!DOCTYPE[^>]*>", b"", r.stdout)) if r and r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ET.ParseError):
+        root = None
+    out = []
+    for line in (root.iter() if root is not None else []):
+        if local(line.tag) != "line":
+            continue
+        try:
+            words = [(w.text.strip(), float(w.get("yMax")) - float(w.get("yMin")))
+                     for w in line if local(w.tag) == "word" and (w.text or "").strip()]
+            wide = float(line.get("xMax")) - float(line.get("xMin"))
+        except (TypeError, ValueError):
+            continue
+        if words:
+            h = sorted(x[1] for x in words)[len(words) // 2]
+            if h < wide or len(words) == 1 and len(words[0][0]) <= 2:  # a tall narrow line is rotated text
+                out.append((" ".join(x[0] for x in words), round(h, 1)))
+    return out
+
+
+def guess_heading(lines, running):
+    """(title, authors, skipped) from a first page's lines, each (text, height).
+    The title is the first run of up to five lines in the page's largest type,
+    ignoring lines that recur on later pages (running heads, mastheads), stamps
+    and affiliations. Authors are the smaller lines just under it, taken only
+    when they read as names and an affiliation, an email address, "Abstract" or
+    the end of the page follows them. Plain text, where every height is 0 and a
+    blank line ends the title, gives a title but never authors."""
+    def kind(x):
+        if not x or not re.search(r"[^\W\d_]{2}", x):
+            return "blank"
+        if line_key(x) in running:
+            return "running"
+        if TITLE_SKIP.search(x) or FURNITURE.match(x):
+            return "stamp"
+        return "affiliation" if AFFILIATION.search(x) or re.match(r"[\d*∗†‡§¶]", x) else "text"
+    kinds = [kind(t) for t, _ in lines]
+    plain = not any(h for _, h in lines)
+    # in plain text an author line can't be told from a title by its size, so names are ruled out by their words
+    names = lambda x: plain and name_list(x) and not wordy(x)
+    # largest type outranks the word lists: a title may mention a school or a university
+    titleish = lambda i: kinds[i] == "text" or (kinds[i] == "affiliation" and not plain and "@" not in lines[i][0]
+                                                             and not re.match(r"[\d*∗†‡§¶]", lines[i][0]))
+    stop = next((i for i, (t, _) in enumerate(lines)
+                 if re.match(r"\s*((abstract|keywords?)\s*([:.—–-]|$)|(1\.?\s+)?introduction\s*$)", t, re.I)), len(lines))
+    # A line that repeats on later pages is never the title: it is usually a masthead, though it can be the
+    # title used as its own running head. Decided 28 November 2026: skip it, and say so in the output.
+    # guess_meta then names a skipped line set as large as the title, and points to --title.
+    starts = [i for i in range(stop) if titleish(i) and len(lines[i][0].split()) >= 2 and not names(lines[i][0])]
+    if not starts:
+        return None, [], [t for (t, _), k in zip(lines[:stop], kinds) if k == "running"]
+    top = max(lines[i][1] for i in starts)
+    same = lambda h: abs(h - top) <= 0.05 * top
+    i = next(i for i in starts if same(lines[i][1]))
+    skipped = [t for (t, _), k in zip(lines[:i], kinds) if k == "running"]
+    j = i + 1
+    while j < len(lines) and j - i < 5 and titleish(j) and same(lines[j][1]) and not names(lines[j][0]):
+        j += 1
+    if j - i >= 5 and j < len(lines) and titleish(j) and same(lines[j][1]):
+        return None, [], skipped  # a paragraph, not a title
+    title = clean_title(re.sub(r"(?<=[^\W\d_])-\s+(?=[a-z])", "-", " ".join(t for t, _ in lines[i:j])))
+    if len(title.split()) < 3:
+        return None, [], skipped
+    authors, k = [], j
+    while k < len(lines) and kinds[k] == "stamp":
+        k += 1
+    size = lines[k][1] if k < len(lines) else 0  # every author line in one size; an affiliation is usually smaller
+    while top and k < len(lines) and lines[k][1] < 0.95 * top and abs(lines[k][1] - size) <= 0.05 * size and name_list(lines[k][0]):
+        authors += name_list(lines[k][0])
+        k += 1
+        while k < len(lines) and kinds[k] == "stamp":
+            k += 1
+    def ends(m):  # what may follow the names: an affiliation, an email address, the abstract, or nothing
+        return m >= len(lines) or kinds[m] in ("affiliation", "blank") or "@" in lines[m][0] or lines[m][0].startswith("{")
+    small = lambda m: m < len(lines) and lines[m][1] < 0.95 * size  # an affiliation in smaller type with no telltale word
+    found = ends(k) or small(k) and (ends(k + 1) or small(k + 1) and ends(k + 2))
+    return title, authors if authors and found else [], skipped
+
+
+PUB_YEAR = re.compile(r"(?:©|\(c\)|\bcopyright\b)\s*(?:\D{0,25}?)\b((?:19|20)\d\d)\b"
+                      r"|(?:^|;)\s*(?:first\s+)?(?:published(?: online)?|accepted|received|available online)\b[^\n;]{0,30}?\b((?:19|20)\d\d)\b", re.I | re.M)
+ISSUE_YEAR = re.compile(r"\bvol(?:ume)?\.?\s*\d+\s*[,(]\s*(?:no\.?\s*\d+\s*[,(]?\s*)?(?:[a-z]{3,9}\.?,?\s*)?((?:19|20)\d\d)\b", re.I)
+REPRINTED = re.compile(r"jstor|scan|abbyy|capture|ocr|print to pdf|quartz|skia|chrom|safari|wkhtmltopdf|firefox|ghostscript", re.I)
+
+
+def guess_year(first, info):
+    """(year, how) for a PDF with no record, or (None, why) rather than a wrong
+    guess. In order: a year with a publication cue (©, or a line starting
+    "Published" or "Received"); the PDF's creation date, unless the file looks
+    like a scan, a download stamp or a browser print, whose date isn't the
+    paper's; a volume line such as "Vol. 3 (2012)". A bare year in the text,
+    such as one end of "1941–1965", is never used."""
+    this_year = datetime.date.today().year
+    cued = [int(y) for m in PUB_YEAR.finditer(first) for y in m.groups() if y and int(y) <= this_year]
+    if cued:
+        return max(cued), "printed on the first page"
+    made = re.search(r"\b(19\d\d|20\d\d)\b", info.get("CreationDate", ""))
+    tool = " ".join(info.get(k, "") for k in ("Creator", "Producer"))
+    if made and 1993 <= int(made.group(1)) <= this_year and not REPRINTED.search(tool):
+        return int(made.group(1)), "the PDF's creation date"
+    issue = [int(m.group(1)) for m in ISSUE_YEAR.finditer(first) if int(m.group(1)) <= this_year]
+    if issue:
+        return issue[0], "the volume line on the first page"
+    return None, "nothing on the first page or in the PDF gives it"
+
+
+def guess_meta(pdf, text):
+    """Title, authors and year for a PDF with no record, with how each was found."""
+    pages = text.read_text(encoding="utf-8", errors="replace").split("\f") if text else [""]
+    first, info = pages[0], pdf_info(pdf)
+    lines = first_page_lines(pdf) or [(x.strip(), 0) for x in first.splitlines()]
+    running = running_lines(pages)
+    title, authors, skipped = guess_heading(lines, running)
+    how = {}
+    t, tk = info.get("Title", ""), line_key(info.get("Title", ""))
+    masthead = tk in running or any(tk == line_key(x) for x in skipped)  # some PDFs put the journal's name in the field
+    if len(t.split()) >= 3 and not masthead and not re.search(r"\.(pdf|docx?|tex|indd)$|microsoft word|untitled|^arxiv:|https?:|\bdoi\b", t, re.I):
+        how["title"] = "the PDF's own Title field"
+        hk = line_key(title or "")
+        if title and not (hk[:60].startswith(tk[:60]) or tk[:60].startswith(hk[:60])):
+            authors = []  # names found under some other heading aren't this title's authors
+            how["title"] += "; the first page's largest heading reads “%s”" % title
+        title = t
+    elif title:
+        tk = line_key(title)
+        size = max((h for x, h in lines if line_key(x) and line_key(x) in tk), default=0)
+        rival = next((x for x, h in lines if line_key(x) in running and size and h >= 0.95 * size), None)
+        if rival:  # in type as large as the title: a masthead, or the title repeated as the running head
+            how["title"] = "the first page; skipped “%s”, set as large but repeated on later pages: if that is the title, use --title" % rival
+        else:
+            how["title"] = "the first page" + ("; skipped %s, which %s on later pages" % (" and ".join(
+                "“%s”" % x for x in skipped[:2]), "repeats" if len(skipped) == 1 else "repeat") if skipped else "")
+    else:
+        title, how["title"] = "Untitled paper", "nothing on the first page reads as a title" + (
+            "; skipped “%s”, which repeats on later pages: if that is the title, use --title" % skipped[0] if skipped else "")
+    how["authors"] = "the line under the title" if authors else "no author line under the title"
+    year, how["year"] = guess_year(first, info)
+    return {"title": title, "authors": authors, "year": year}, how
 
 
 def pdf_meta(pdf, text, key):
     """Metadata for a local PDF. An identifier printed on its first page is
-    trusted only if the record it leads to has this PDF's title."""
+    trusted only if the record it leads to has this PDF's title. Failing that,
+    the title, authors and year are guessed, and meta["guessed"] says how."""
     first = text.read_text(encoding="utf-8", errors="replace").split("\f")[0] if text else ""
     m = re.search(r"arXiv:\s*(%s)" % ARXIV_ID, first)
     if m:
@@ -2841,10 +3057,46 @@ def pdf_meta(pdf, text, key):
             continue
         if on_first_page(meta["title"], first):
             return meta
-    year = re.search(r"\b(19[5-9]\d|20[0-4]\d)\b", first)
-    print("  no record found for this PDF: title guessed from its first page, authors left blank")
-    return {"pid": "pdf:" + key, "title": guess_title(pdf, first), "authors": [], "year": int(year.group(1)) if year else None,
-            "venue": None, "doi": None, "arxiv": None, "pmcid": None}
+    found, how = guess_meta(pdf, text)
+    return dict(found, pid="pdf:" + key, venue=None, doi=None, arxiv=None, pmcid=None, guessed=how)
+
+
+def set_title_html(meta, title_html):
+    """The source's own marked-up title, unless --title replaced the title."""
+    if not meta.get("title_given"):
+        meta["title_html"] = title_html
+
+
+def settle_meta(meta, given=None, advise=True):
+    """Apply --title, --author, --year and --venue to a paper's record, then say
+    which fields were guessed and what was guessed, so a bad guess shows in the output."""
+    given = given or {}
+    how = meta.pop("guessed", None) or {}
+    for k in ("title", "authors", "year", "venue"):
+        if given.get(k) is not None:
+            meta[k] = given[k]
+            how.pop(k, None)
+    if given.get("title") is not None:
+        meta["title_given"] = True
+        meta.pop("title_html", None)
+    for k, flag in (("title", "--title"), ("authors", "--author"), ("year", "--year"), ("venue", "--venue")):
+        if given.get(k) is not None:
+            print("  %s: %s, as given with %s" % (k, show_field(k, meta[k]), flag))
+    if how:
+        print("  no record found for this PDF, so these were guessed from it:")
+        for k in ("title", "authors", "year"):
+            if k in how:
+                print("    %-8s %s (%s)" % (k + ":", show_field(k, meta[k]), how[k]))
+        if advise:
+            print("  If one is wrong, build again with %s." % " / ".join(
+                flag for k, flag in (("title", '--title "…"'), ("authors", '--author "…"'), ("year", "--year YYYY")) if k in how))
+    return meta
+
+
+def show_field(k, v):
+    if k == "authors":
+        return "; ".join(v) if v else "left blank"
+    return str(v) if v not in (None, "") else "left blank"
 
 
 def jats_text(xml, out):
@@ -2875,8 +3127,9 @@ def jats_text(xml, out):
     return out
 
 
-def identify(kind, value):
-    """(metadata, work folder, local PDF or None) for one input."""
+def identify(kind, value, given=None, advise=True):
+    """(metadata, work folder, local PDF or None) for one input. `given` holds
+    any --title, --author, --year and --venue, which replace what was found."""
     pdf = None
     if kind == "pdf":
         data = value.read_bytes()
@@ -2908,6 +3161,7 @@ def identify(kind, value):
     if kind != "pdf":
         d = WORK / "standalone" / safe_id(meta["pid"])
         d.mkdir(parents=True, exist_ok=True)
+    settle_meta(meta, given, advise)
     meta["standalone"] = True
     return meta, d, pdf
 
@@ -2999,7 +3253,7 @@ def cmd_standalone(a):
     a.epub = a.epub or a.email == "epub"  # the copy to send has to be written first
     a.single_file = a.single_file or a.email == "html"
     kind, value = parse_input(a.input)
-    meta, d, pdf = identify(kind, value)
+    meta, d, pdf = identify(kind, value, given_meta(a))
     if a.pages:  # a page range is a different conversion of the same PDF
         d = d / ("pages-" + a.pages)
         d.mkdir(parents=True, exist_ok=True)
@@ -3140,7 +3394,7 @@ def cmd_bundle(a):
         try:
             kind, value = parse_input(it["input"])
             p["kind"] = kind
-            meta, d, pdf = identify(kind, value)
+            meta, d, pdf = identify(kind, value, advise=False)  # bundle lines take no --title
         except ReaderError as e:
             p["error"], p["fix"] = bundle_failure(e, p, bundle_file)
             print("  not converted: %s. %s" % (p["error"], p["fix"]))
@@ -3297,7 +3551,28 @@ def standalone_parser():
     ap.add_argument("--epub", action="store_true", help="also write an EPUB copy for an e-reader")
     ap.add_argument("--single-file", action="store_true", help=SINGLE_HELP)
     ap.add_argument("--email", nargs="?", const="epub", choices=["epub", "html"], help=EMAIL_HELP)
+    ap.add_argument("--title", help="use this title instead of the one found or guessed")
+    ap.add_argument("--author", action="append", metavar="NAME",
+                    help="an author, in the order they are listed; repeat for each one. --author \"\" leaves them blank")
+    ap.add_argument("--year", type=year_arg, help="use this year instead of the one found or guessed; --year \"\" leaves it blank")
+    ap.add_argument("--venue", help="the journal or other venue to show and cite")
     return ap
+
+
+def year_arg(v):
+    if v.strip() and not re.fullmatch(r"\d{4}", v.strip()):
+        raise argparse.ArgumentTypeError("takes a year such as 2012, or \"\" to leave it blank")
+    return int(v) if v.strip() else ""
+
+
+def given_meta(a):
+    """--title, --author, --year and --venue as a partial record (None where not given)."""
+    title = (a.title or "").strip()
+    if a.title is not None and not title:
+        raise ReaderError("--title can't be blank")
+    return {"title": title or None,
+            "authors": None if a.author is None else [x.strip() for x in a.author if x.strip()],
+            "year": a.year, "venue": (a.venue or "").strip() or (None if a.venue is None else "")}
 
 
 def email_first(argv):

@@ -68,6 +68,7 @@ The reading copy is written to `./<slug>/index.html`, where the slug combines th
 | `--epub` | Also writes an EPUB copy into the same folder. |
 | `--single-file` | Also writes `<slug>.html` into the same folder: the same reading copy with its styles, script and fonts inside it, so the one file works on its own. It leaves out links to a local PDF, which wouldn't travel with it. |
 | `--email` | Also emails the EPUB to you, for Apple Books or another e-reader. `--email html` sends the single file instead. It needs the setup in [Emailing a copy to yourself](#emailing-a-copy-to-yourself). |
+| `--title`, `--author`, `--year`, `--venue` | Replace the title, authors, year or venue that lit-reader found or guessed, everywhere they appear, the EPUB included. Repeat `--author` for each author, in order. `--author ""` or `--year ""` leaves that field blank. |
 
 ### Bundles: several papers together
 
@@ -122,6 +123,8 @@ To change this, use `--route`:
 For example, `lit-reader paper.pdf --route online` looks for an online version of the paper in your PDF. It can only do this if the PDF's first page shows an arXiv ID or a DOI.
 
 On every route, a PDF's arXiv ID or DOI is looked up online for its title and authors: see [Privacy](#privacy).
+
+If the first page shows no arXiv ID or DOI, or the record found doesn't have this PDF's title, lit-reader guesses from the PDF itself, and prints each guess and where it came from. The title is the PDF's own Title field if it has one, or otherwise the largest type on the first page, skipping lines that repeat on later pages, such as a journal's masthead. The authors are the line of names under that title, and are left blank unless an affiliation, an email address or the abstract follows them. The year comes from a line such as "© 2012" or "Published 2012", or else from the date the PDF was made, unless the PDF looks like a scan or a later download. If none of these gives a year, it is left blank, because a year in the text, such as one end of "1941–1965", is often not the year of publication. When a guess is wrong, build again with `--title`, `--author`, `--year` or `--venue`.
 
 ### What each source gives you
 
